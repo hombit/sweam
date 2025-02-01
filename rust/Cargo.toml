@@ -1,0 +1,16 @@
+[package]
+name = "sweam"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+#hidapi = { version = "2.6.3", default-features = false, features = ["linux-shared-hidraw"] }
+#evdev = "0.12.2"
+anyhow = "1"
+# Build-time requirement on Debian/Ubuntu:
+# apt install libclang-dev libkmod-dev
+# Run-time requirement on Debian/Ubuntu:
+# apt install libkmod2
+kmod = "0.5"
+rusb = "0.9.4"
+libc = "0.2"

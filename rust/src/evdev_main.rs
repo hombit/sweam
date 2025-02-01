@@ -1,3 +1,5 @@
+mod main;
+
 use evdev::Device;
 
 fn main() {
