@@ -1,2 +1,4 @@
-/rust/target
+/target
 /nxbt
+.DS_Store
+/.claude/

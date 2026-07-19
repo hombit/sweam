@@ -1,0 +1,20 @@
+[package]
+name = "sweam"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-2-Clause"
+description = "Bridge an original Steam Controller to a Nintendo Switch by emulating a Pro Controller over USB gadget"
+
+# zig's linker warns that it ignores rustc's `-Wl,-O1` (deprecated there);
+# harmless, so don't surface linker stderr as a build warning.
+[lints.rust]
+linker_messages = "allow"
+
+[dependencies]
+anyhow = "1"
+
+# Linux-only dependencies: the binary only ever runs on Linux (Radxa Zero 3E),
+# but `cargo check` should keep working on the macOS dev machine.
+[target.'cfg(target_os = "linux")'.dependencies]
+evdev = "0.13"
+libc = "0.2"

@@ -1,0 +1,104 @@
+// sweam controller mapping — replica of the built-in default layout.
+//
+// Syntax is Valve KeyValues ("VDF"), the format Steam itself stores
+// controller configurations in. The schema is a simplified subset of
+// Steam's controller_mappings; binding values are "switch_button <NAME>"
+// where Steam would emit "xinput_button <NAME>". Full schema reference:
+// src/steam/config.rs. Run with:  sweam steam --config configs/default.vdf
+"controller_mappings"
+{
+	"version"		"1"
+	"title"			"Positional ABXY (sweam default)"
+	"description"	"Buttons match by physical position: Steam's bottom button acts as Switch B. Left pad clicks are the d-pad, joystick is the left stick, right pad is the right stick, full trigger pulls are ZL/ZR, grips are Capture/Home."
+
+	"group"
+	{
+		"source"	"button_diamond"
+		"bindings"
+		{
+			// Steam uses the Xbox layout (A bottom, B right, X left, Y top);
+			// Switch puts B bottom, A right, Y left, X top → swap to keep
+			// physical positions.
+			"button_a"	"switch_button B"
+			"button_b"	"switch_button A"
+			"button_x"	"switch_button Y"
+			"button_y"	"switch_button X"
+		}
+	}
+
+	"group"
+	{
+		"source"	"switch"
+		"bindings"
+		{
+			"left_bumper"		"switch_button L"
+			"right_bumper"		"switch_button R"
+			"button_escape"		"switch_button MINUS"	// left menu (back)
+			"button_menu"		"switch_button PLUS"	// right menu (start)
+			"button_steam"		"switch_button HOME"	// Steam logo
+			"button_back_left"	"switch_button CAPTURE"	// left grip lever
+			"button_back_right"	"switch_button HOME"	// right grip lever
+		}
+	}
+
+	"group"
+	{
+		"source"	"left_trigger"
+		"mode"		"trigger"
+		"bindings"
+		{
+			"click"	"switch_button ZL"	// full pull
+		}
+	}
+
+	"group"
+	{
+		"source"	"right_trigger"
+		"mode"		"trigger"
+		"bindings"
+		{
+			"click"	"switch_button ZR"
+		}
+	}
+
+	"group"
+	{
+		"source"	"joystick"
+		"mode"		"joystick_move"
+		"bindings"
+		{
+			"click"	"switch_button LSTICK"
+		}
+		"settings"
+		{
+			"output_joystick"	"left"
+		}
+	}
+
+	"group"
+	{
+		"source"	"left_trackpad"
+		"mode"		"dpad"
+		"bindings"
+		{
+			"dpad_north"	"switch_button DPAD_UP"
+			"dpad_south"	"switch_button DPAD_DOWN"
+			"dpad_west"		"switch_button DPAD_LEFT"
+			"dpad_east"		"switch_button DPAD_RIGHT"
+		}
+	}
+
+	"group"
+	{
+		"source"	"right_trackpad"
+		"mode"		"joystick_move"
+		"bindings"
+		{
+			"click"	"switch_button RSTICK"
+		}
+		"settings"
+		{
+			"output_joystick"	"right"
+		}
+	}
+}

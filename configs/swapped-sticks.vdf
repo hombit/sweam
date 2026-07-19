@@ -1,0 +1,82 @@
+// sweam controller mapping — analog sticks swapped ("southpaw" analogs).
+//
+// The physical joystick drives the Switch *right* stick (camera) and the
+// right pad drives the Switch *left* stick (movement). Stick clicks follow
+// their outputs. Everything else matches configs/default.vdf.
+// Run with:  sweam steam --config configs/swapped-sticks.vdf
+"controller_mappings"
+{
+	"version"		"1"
+	"title"			"Swapped sticks"
+	"description"	"Joystick is the Switch right stick, right pad is the Switch left stick; the rest is the default layout."
+
+	"group"
+	{
+		"source"	"button_diamond"
+		"bindings"
+		{
+			"button_a"	"switch_button B"
+			"button_b"	"switch_button A"
+			"button_x"	"switch_button Y"
+			"button_y"	"switch_button X"
+		}
+	}
+
+	"group"
+	{
+		"source"	"switch"
+		"bindings"
+		{
+			"left_bumper"		"switch_button L"
+			"right_bumper"		"switch_button R"
+			"button_escape"		"switch_button MINUS"
+			"button_menu"		"switch_button PLUS"
+			"button_steam"		"switch_button HOME"
+			"button_back_left"	"switch_button CAPTURE"
+			"button_back_right"	"switch_button HOME"
+		}
+	}
+
+	"group"
+	{
+		"source"	"left_trigger"
+		"mode"		"trigger"
+		"bindings"	{ "click" "switch_button ZL" }
+	}
+
+	"group"
+	{
+		"source"	"right_trigger"
+		"mode"		"trigger"
+		"bindings"	{ "click" "switch_button ZR" }
+	}
+
+	"group"
+	{
+		"source"	"joystick"
+		"mode"		"joystick_move"
+		"bindings"	{ "click" "switch_button RSTICK" }	// click follows output
+		"settings"	{ "output_joystick" "right" }
+	}
+
+	"group"
+	{
+		"source"	"left_trackpad"
+		"mode"		"dpad"
+		"bindings"
+		{
+			"dpad_north"	"switch_button DPAD_UP"
+			"dpad_south"	"switch_button DPAD_DOWN"
+			"dpad_west"		"switch_button DPAD_LEFT"
+			"dpad_east"		"switch_button DPAD_RIGHT"
+		}
+	}
+
+	"group"
+	{
+		"source"	"right_trackpad"
+		"mode"		"joystick_move"
+		"bindings"	{ "click" "switch_button LSTICK" }	// click follows output
+		"settings"	{ "output_joystick" "left" }
+	}
+}
