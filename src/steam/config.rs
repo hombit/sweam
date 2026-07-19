@@ -30,14 +30,16 @@
 //! emits `xinput_button <NAME>`); groups carry an explicit `source` (Steam
 //! uses a separate `preset`/`group_source_bindings` table); only the modes
 //! the bridge implements exist (`dpad` for the left pad, `joystick_move`
-//! for pad/joystick, `trigger` for full pulls).
+//! for pad/joystick, `trigger` for full pulls). The left pad's `dpad` group
+//! honors Steam's `requires_click` setting: `"1"` (default) presses on the
+//! click quadrants, `"0"` makes the touch position alone drive the d-pad.
 //!
 //! A config is a *complete* layout: it starts from an empty mapping, and
 //! anything it doesn't bind stays unbound. Unknown sources and binding keys
 //! are warnings (so configs written for a future sweam still load); a
 //! malformed binding value is an error.
 
-use super::mapping::{self, Mapping, StickTarget};
+use super::mapping::{self, LeftPadMode, Mapping, StickTarget};
 use crate::state::Button;
 use crate::vdf;
 use anyhow::{bail, Context};
@@ -100,12 +102,15 @@ fn apply_group(mapping: &mut Mapping, group: &vdf::Block) -> anyhow::Result<()> 
         ],
         "left_trigger" => &[("click", &[mapping::BTN_TL2])],
         "right_trigger" => &[("click", &[mapping::BTN_TR2])],
-        "left_trackpad" => &[
-            ("dpad_north", &[mapping::BTN_DPAD_UP]),
-            ("dpad_south", &[mapping::BTN_DPAD_DOWN]),
-            ("dpad_west", &[mapping::BTN_DPAD_LEFT]),
-            ("dpad_east", &[mapping::BTN_DPAD_RIGHT]),
-        ],
+        "left_trackpad" => {
+            mapping.left_pad = left_pad_mode(group).with_context(|| format!("group {source:?}"))?;
+            &[
+                ("dpad_north", &[mapping::BTN_DPAD_UP]),
+                ("dpad_south", &[mapping::BTN_DPAD_DOWN]),
+                ("dpad_west", &[mapping::BTN_DPAD_LEFT]),
+                ("dpad_east", &[mapping::BTN_DPAD_RIGHT]),
+            ]
+        }
         "joystick" => {
             mapping.joystick = output_stick(group).with_context(|| format!("group {source:?}"))?;
             &[("click", &[mapping::BTN_THUMBL])]
@@ -163,6 +168,20 @@ fn output_stick(group: &vdf::Block) -> anyhow::Result<StickTarget> {
     }
 }
 
+/// `settings { "requires_click" "1"|"0" }` on the left pad's dpad group —
+/// Steam's own setting name for this: `"1"` (the default) presses directions
+/// on the click quadrants, `"0"` lets the touch position alone drive them.
+fn left_pad_mode(group: &vdf::Block) -> anyhow::Result<LeftPadMode> {
+    let Some(settings) = group.get_block("settings") else {
+        return Ok(LeftPadMode::ClickDpad);
+    };
+    match settings.get_str("requires_click") {
+        None | Some("1") => Ok(LeftPadMode::ClickDpad),
+        Some("0") => Ok(LeftPadMode::TouchDpad),
+        Some(other) => bail!("bad requires_click {other:?} (0|1)"),
+    }
+}
+
 /// `switch_button <NAME>` or `none`. Steam values carry trailing activator
 /// fields (`"xinput_button A, , "`) — tolerate and ignore them.
 fn parse_binding(value: &str) -> anyhow::Result<Option<Button>> {
@@ -200,11 +219,14 @@ fn button_by_name(name: &str) -> anyhow::Result<Button> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::steam::mapping::{BTN_A, BTN_GEAR_DOWN, BTN_GRIPL, BTN_THUMBL, BTN_TL2};
+    use crate::steam::mapping::{
+        BTN_A, BTN_DPAD_UP, BTN_GEAR_DOWN, BTN_GRIPL, BTN_THUMBL, BTN_TL2,
+    };
 
     const DEFAULT: &str = include_str!("../../configs/default.vdf");
     const FACE_LABELS: &str = include_str!("../../configs/face-labels.vdf");
     const SWAPPED: &str = include_str!("../../configs/swapped-sticks.vdf");
+    const TOUCH_DPAD: &str = include_str!("../../configs/touch-dpad.vdf");
 
     #[test]
     fn default_config_matches_builtin_mapping() {
@@ -226,6 +248,30 @@ mod tests {
         assert_eq!(mapping.joystick, StickTarget::RightStick);
         assert_eq!(mapping.right_pad, StickTarget::LeftStick);
         assert_eq!(mapping.button(BTN_THUMBL), Some(Button::RStick));
+    }
+
+    #[test]
+    fn touch_dpad_config_selects_touch_mode() {
+        let mapping = parse(TOUCH_DPAD).unwrap();
+        assert_eq!(mapping.left_pad, LeftPadMode::TouchDpad);
+        // The direction bindings still apply.
+        assert_eq!(mapping.button(BTN_DPAD_UP), Some(Button::Up));
+        // Everything else stays as in the default layout.
+        assert_eq!(mapping.joystick, StickTarget::LeftStick);
+    }
+
+    #[test]
+    fn requires_click_defaults_to_click_mode() {
+        assert_eq!(parse(DEFAULT).unwrap().left_pad, LeftPadMode::ClickDpad);
+        // An explicit "1" means the same thing.
+        let mapping = parse(
+            r#""controller_mappings" { "group" {
+                "source" "left_trackpad"
+                "settings" { "requires_click" "1" }
+            } }"#,
+        )
+        .unwrap();
+        assert_eq!(mapping.left_pad, LeftPadMode::ClickDpad);
     }
 
     #[test]
@@ -280,6 +326,12 @@ mod tests {
             "settings" { "output_joystick" "up" }
         } }"#;
         assert!(parse(bad_output).is_err());
+        // Bad requires_click.
+        let bad_click = r#""controller_mappings" { "group" {
+            "source" "left_trackpad"
+            "settings" { "requires_click" "maybe" }
+        } }"#;
+        assert!(parse(bad_click).is_err());
     }
 
     #[test]

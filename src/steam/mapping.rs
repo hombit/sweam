@@ -9,8 +9,9 @@
 //! - joystick as `ABS_X`/`ABS_Y` and right pad as `ABS_RX`/`ABS_RY`, all in
 //!   -32767..=32767 with up = negative (the driver negates raw Y for us),
 //!   and 0 when released;
-//! - left-pad touch position as `ABS_HAT0X/Y` and analog triggers as
-//!   `ABS_HAT2X/Y` — both currently unmapped (we use pad clicks and full
+//! - left-pad touch position as `ABS_HAT0X/Y` (with `BTN_THUMB` = left pad
+//!   touched) — used by [`LeftPadMode::TouchDpad`], ignored in the default
+//!   click mode; analog triggers as `ABS_HAT2X/Y` — unmapped (we use full
 //!   trigger pulls instead).
 //!
 //! [`Mapping::default`] is the built-in layout; `steam::config` builds
@@ -37,6 +38,7 @@ pub(crate) const BTN_START: u16 = 0x13B; // menu right
 pub(crate) const BTN_MODE: u16 = 0x13C; // Steam logo
 pub(crate) const BTN_THUMBL: u16 = 0x13D; // joystick clicked
 pub(crate) const BTN_THUMBR: u16 = 0x13E; // right-pad clicked
+pub(crate) const BTN_THUMB: u16 = 0x121; // left-pad touched
 pub(crate) const BTN_THUMB2: u16 = 0x122; // right-pad touched
 pub(crate) const BTN_DPAD_UP: u16 = 0x220; // left-pad click quadrants
 pub(crate) const BTN_DPAD_DOWN: u16 = 0x221;
@@ -53,9 +55,22 @@ const ABS_X: u16 = 0x00;
 const ABS_Y: u16 = 0x01;
 const ABS_RX: u16 = 0x03;
 const ABS_RY: u16 = 0x04;
+const ABS_HAT0X: u16 = 0x10; // left-pad touch position
+const ABS_HAT0Y: u16 = 0x11;
 
 /// evdev axis full scale (`hid-steam` reports symmetric -32767..=32767).
 const AXIS_MAX: i32 = 32767;
+
+/// Touch-dpad center deadzone radius: ~30% of full scale. Touches closer to
+/// the pad center press nothing, so a thumb resting mid-pad doesn't trigger
+/// directions.
+const TOUCH_DPAD_DEADZONE: i32 = AXIS_MAX * 3 / 10;
+
+// tan(22.5°) ≈ 0.41421 as an integer ratio: the slope of the 8-way sector
+// boundaries (each cardinal direction owns ±67.5° around its axis, so
+// adjacent directions overlap in 45° diagonal zones — Steam's dpad feel).
+const SECTOR_TAN_NUM: i64 = 27146;
+const SECTOR_TAN_DEN: i64 = 65536;
 
 /// Which Switch stick a physical analog input drives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +78,17 @@ pub enum StickTarget {
     None,
     LeftStick,
     RightStick,
+}
+
+/// How the left trackpad produces d-pad presses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeftPadMode {
+    /// Click quadrants (`BTN_DPAD_*` from hid-steam) press directions —
+    /// the default.
+    ClickDpad,
+    /// Touch position (`ABS_HAT0X/Y`) presses directions, no click needed:
+    /// Steam's dpad mode with "requires click" off.
+    TouchDpad,
 }
 
 /// A complete Steam Controller → Pro Controller layout.
@@ -74,6 +100,12 @@ pub struct Mapping {
     pub joystick: StickTarget,
     /// What the right pad (`ABS_RX/RY`) drives.
     pub right_pad: StickTarget,
+    /// How the left pad drives the d-pad.
+    pub left_pad: LeftPadMode,
+    /// Last seen left-pad touch position (`ABS_HAT0X/Y`), tracked so a
+    /// single-axis event can re-sectorize with both coordinates. Runtime
+    /// state, only meaningful in [`LeftPadMode::TouchDpad`].
+    left_pad_touch: (i32, i32),
 }
 
 impl Mapping {
@@ -83,6 +115,8 @@ impl Mapping {
             buttons: HashMap::new(),
             joystick: StickTarget::None,
             right_pad: StickTarget::None,
+            left_pad: LeftPadMode::ClickDpad,
+            left_pad_touch: (0, 0),
         }
     }
 
@@ -96,7 +130,7 @@ impl Mapping {
     }
 
     /// Apply one `EV_KEY` event.
-    pub fn apply_key(&self, state: &mut ControllerState, code: u16, pressed: bool) {
+    pub fn apply_key(&mut self, state: &mut ControllerState, code: u16, pressed: bool) {
         // Right pad released: snap its stick back to center in case the
         // last position event didn't return to 0.
         if code == BTN_THUMB2 {
@@ -109,20 +143,52 @@ impl Mapping {
             }
             return;
         }
+        // Left pad released in touch mode: lift all four directions in case
+        // the last position event didn't return to center.
+        if code == BTN_THUMB {
+            if self.left_pad == LeftPadMode::TouchDpad && !pressed {
+                self.left_pad_touch = (0, 0);
+                self.set_touch_dpad(state);
+            }
+            return;
+        }
+        // In touch mode the pad click is not a separate input — ignore the
+        // click quadrants so a click-release while still touching doesn't
+        // lift a held direction.
+        if self.left_pad == LeftPadMode::TouchDpad
+            && matches!(
+                code,
+                BTN_DPAD_UP | BTN_DPAD_DOWN | BTN_DPAD_LEFT | BTN_DPAD_RIGHT
+            )
+        {
+            return;
+        }
         if let Some(&button) = self.buttons.get(&code) {
             state.set_button(button, pressed);
         }
     }
 
     /// Apply one `EV_ABS` event.
-    pub fn apply_abs(&self, state: &mut ControllerState, code: u16, value: i32) {
+    pub fn apply_abs(&mut self, state: &mut ControllerState, code: u16, value: i32) {
+        // Left-pad touch position: drives the d-pad in touch mode only.
+        if code == ABS_HAT0X || code == ABS_HAT0Y {
+            if self.left_pad == LeftPadMode::TouchDpad {
+                if code == ABS_HAT0X {
+                    self.left_pad_touch.0 = value;
+                } else {
+                    self.left_pad_touch.1 = value;
+                }
+                self.set_touch_dpad(state);
+            }
+            return;
+        }
         let (target, x_axis) = match code {
             ABS_X => (self.joystick, true),
             ABS_Y => (self.joystick, false),
             ABS_RX => (self.right_pad, true),
             ABS_RY => (self.right_pad, false),
-            // ABS_HAT0X/Y (left-pad touch) and ABS_HAT2X/Y (analog triggers)
-            // are intentionally unmapped, see module docs.
+            // ABS_HAT2X/Y (analog triggers) are intentionally unmapped,
+            // see module docs.
             _ => return,
         };
         let stick = match target {
@@ -134,6 +200,23 @@ impl Mapping {
             stick.x = scale_x(value);
         } else {
             stick.y = scale_y(value);
+        }
+    }
+
+    /// Press/release whatever the four `BTN_DPAD_*` codes are bound to
+    /// according to the current touch position.
+    fn set_touch_dpad(&self, state: &mut ControllerState) {
+        let (x, y) = self.left_pad_touch;
+        let (up, down, left, right) = touch_dpad_directions(x, y);
+        for (code, pressed) in [
+            (BTN_DPAD_UP, up),
+            (BTN_DPAD_DOWN, down),
+            (BTN_DPAD_LEFT, left),
+            (BTN_DPAD_RIGHT, right),
+        ] {
+            if let Some(&button) = self.buttons.get(&code) {
+                state.set_button(button, pressed);
+            }
         }
     }
 }
@@ -179,6 +262,25 @@ impl Default for Mapping {
     }
 }
 
+/// 8-way sectorization of a left-pad touch, Steam-dpad style: inside the
+/// [`TOUCH_DPAD_DEADZONE`] circle nothing is pressed; outside, each cardinal
+/// direction is active within ±67.5° of its axis, so adjacent directions
+/// overlap in 45° diagonal zones. Returns `(up, down, left, right)`; evdev
+/// up is negative y. `(0, 0)` (untouched) presses nothing.
+fn touch_dpad_directions(x: i32, y: i32) -> (bool, bool, bool, bool) {
+    let (x, y) = (x as i64, y as i64);
+    let deadzone = TOUCH_DPAD_DEADZONE as i64;
+    if x * x + y * y < deadzone * deadzone {
+        return (false, false, false, false);
+    }
+    // Active when the component along the direction is positive and at
+    // least tan(22.5°) times the perpendicular one.
+    let active = |along: i64, across: i64| {
+        along > 0 && along * SECTOR_TAN_DEN >= across.abs() * SECTOR_TAN_NUM
+    };
+    (active(-y, x), active(y, x), active(-x, y), active(x, y))
+}
+
 /// evdev -32767..=32767 → Switch 12-bit, right = max.
 fn scale_x(value: i32) -> u16 {
     let center = StickState::CENTER as i32;
@@ -199,7 +301,7 @@ mod tests {
 
     #[test]
     fn abxy_are_swapped_positionally() {
-        let mapping = Mapping::default();
+        let mut mapping = Mapping::default();
         let mut state = ControllerState::default();
         mapping.apply_key(&mut state, BTN_A, true); // Steam bottom → Switch bottom (B)
         assert_ne!(state.buttons & (1 << Button::B as u32), 0);
@@ -212,15 +314,108 @@ mod tests {
 
     #[test]
     fn left_pad_clicks_are_dpad() {
-        let mapping = Mapping::default();
+        let mut mapping = Mapping::default();
         let mut state = ControllerState::default();
         mapping.apply_key(&mut state, BTN_DPAD_LEFT, true);
         assert_ne!(state.buttons & (1 << Button::Left as u32), 0);
     }
 
+    /// Default layout with the left pad switched to touch mode.
+    fn touch_mapping() -> Mapping {
+        Mapping {
+            left_pad: LeftPadMode::TouchDpad,
+            ..Mapping::default()
+        }
+    }
+
+    fn pressed(state: &ControllerState, button: Button) -> bool {
+        state.buttons & (1 << button as u32) != 0
+    }
+
+    #[test]
+    fn touch_dpad_cardinals_press_one_direction() {
+        let mut mapping = touch_mapping();
+        let mut state = ControllerState::default();
+        // Full right, slightly off-axis: still a plain Right.
+        mapping.apply_abs(&mut state, ABS_HAT0X, AXIS_MAX);
+        mapping.apply_abs(&mut state, ABS_HAT0Y, -5000);
+        assert!(pressed(&state, Button::Right));
+        for button in [Button::Up, Button::Down, Button::Left] {
+            assert!(!pressed(&state, button), "{button:?}");
+        }
+        // Sliding to full up (evdev up = negative) hands over cleanly.
+        mapping.apply_abs(&mut state, ABS_HAT0X, 0);
+        mapping.apply_abs(&mut state, ABS_HAT0Y, -AXIS_MAX);
+        assert!(pressed(&state, Button::Up));
+        assert!(!pressed(&state, Button::Right));
+    }
+
+    #[test]
+    fn touch_dpad_diagonals_press_two_directions() {
+        let mut mapping = touch_mapping();
+        let mut state = ControllerState::default();
+        mapping.apply_abs(&mut state, ABS_HAT0X, 20000);
+        mapping.apply_abs(&mut state, ABS_HAT0Y, -20000);
+        assert!(pressed(&state, Button::Up));
+        assert!(pressed(&state, Button::Right));
+        assert!(!pressed(&state, Button::Down));
+        assert!(!pressed(&state, Button::Left));
+    }
+
+    #[test]
+    fn touch_dpad_deadzone_presses_nothing() {
+        let mut mapping = touch_mapping();
+        let mut state = ControllerState::default();
+        mapping.apply_abs(&mut state, ABS_HAT0X, TOUCH_DPAD_DEADZONE - 1);
+        assert_eq!(state.buttons, 0);
+        // Leaving the deadzone presses, retreating into it releases.
+        mapping.apply_abs(&mut state, ABS_HAT0X, TOUCH_DPAD_DEADZONE);
+        assert!(pressed(&state, Button::Right));
+        mapping.apply_abs(&mut state, ABS_HAT0X, 100);
+        assert_eq!(state.buttons, 0);
+    }
+
+    #[test]
+    fn touch_dpad_releases_all_on_untouch() {
+        let mut mapping = touch_mapping();
+        let mut state = ControllerState::default();
+        mapping.apply_key(&mut state, BTN_THUMB, true);
+        mapping.apply_abs(&mut state, ABS_HAT0X, 20000);
+        mapping.apply_abs(&mut state, ABS_HAT0Y, 20000);
+        assert!(pressed(&state, Button::Down));
+        // Untouch without the axes returning to 0 first.
+        mapping.apply_key(&mut state, BTN_THUMB, false);
+        assert_eq!(state.buttons, 0);
+        // The stale position was also forgotten: a later single-axis event
+        // sectorizes against center, not the old coordinate.
+        mapping.apply_abs(&mut state, ABS_HAT0X, AXIS_MAX);
+        assert!(pressed(&state, Button::Right));
+        assert!(!pressed(&state, Button::Down));
+    }
+
+    #[test]
+    fn touch_dpad_ignores_click_quadrants() {
+        let mut mapping = touch_mapping();
+        let mut state = ControllerState::default();
+        mapping.apply_abs(&mut state, ABS_HAT0X, -AXIS_MAX);
+        // A click-release while still touching must not lift the direction.
+        mapping.apply_key(&mut state, BTN_DPAD_LEFT, true);
+        mapping.apply_key(&mut state, BTN_DPAD_LEFT, false);
+        assert!(pressed(&state, Button::Left));
+    }
+
+    #[test]
+    fn click_mode_ignores_touch_position() {
+        let mut mapping = Mapping::default();
+        let mut state = ControllerState::default();
+        mapping.apply_abs(&mut state, ABS_HAT0X, AXIS_MAX);
+        mapping.apply_key(&mut state, BTN_THUMB, true);
+        assert_eq!(state.buttons, 0);
+    }
+
     #[test]
     fn both_grip_encodings_map_the_same() {
-        let mapping = Mapping::default();
+        let mut mapping = Mapping::default();
         for code in [BTN_GRIPL, BTN_GEAR_DOWN] {
             let mut state = ControllerState::default();
             mapping.apply_key(&mut state, code, true);
@@ -234,7 +429,7 @@ mod tests {
 
     #[test]
     fn press_and_release_round_trips() {
-        let mapping = Mapping::default();
+        let mut mapping = Mapping::default();
         let mut state = ControllerState::default();
         mapping.apply_key(&mut state, BTN_TL2, true);
         mapping.apply_key(&mut state, BTN_TL2, false);
@@ -255,7 +450,7 @@ mod tests {
 
     #[test]
     fn joystick_moves_left_stick() {
-        let mapping = Mapping::default();
+        let mut mapping = Mapping::default();
         let mut state = ControllerState::default();
         mapping.apply_abs(&mut state, ABS_X, AXIS_MAX);
         mapping.apply_abs(&mut state, ABS_Y, -AXIS_MAX);
@@ -265,7 +460,7 @@ mod tests {
 
     #[test]
     fn right_pad_release_recenters_right_stick() {
-        let mapping = Mapping::default();
+        let mut mapping = Mapping::default();
         let mut state = ControllerState::default();
         mapping.apply_key(&mut state, BTN_THUMB2, true);
         mapping.apply_abs(&mut state, ABS_RX, 12345);
@@ -287,7 +482,7 @@ mod tests {
 
     #[test]
     fn unbound_inputs_do_nothing() {
-        let mapping = Mapping::empty();
+        let mut mapping = Mapping::empty();
         let mut state = ControllerState::default();
         mapping.apply_key(&mut state, BTN_A, true);
         mapping.apply_abs(&mut state, ABS_X, AXIS_MAX);

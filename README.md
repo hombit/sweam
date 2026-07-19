@@ -112,6 +112,8 @@ example in [`configs/`](configs/):
   Capture/Home.
 - `face-labels.vdf` — ABXY matched by printed label instead.
 - `swapped-sticks.vdf` — joystick and right pad swap their Switch sticks.
+- `touch-dpad.vdf` — the left pad's *touch* position drives the d-pad
+  (no click needed), 8-way with diagonals and a center deadzone.
 
 Copy one, edit the `switch_button …` values (names: `A B X Y DPAD_UP
 DPAD_DOWN DPAD_LEFT DPAD_RIGHT L R ZL ZR MINUS PLUS HOME CAPTURE LSTICK

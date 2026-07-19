@@ -1,0 +1,110 @@
+// sweam controller mapping — default layout, but the left pad's *touch*
+// position drives the d-pad (no click needed), like Steam's dpad mode with
+// "requires click" turned off. A touch outside the ~30% center deadzone
+// presses the direction(s) under the thumb, diagonals included; lifting the
+// thumb releases everything. Full schema reference: src/steam/config.rs.
+// Run with:  sweam steam --config configs/touch-dpad.vdf
+"controller_mappings"
+{
+	"version"		"1"
+	"title"			"Touch d-pad"
+	"description"	"Like the default layout, but the left pad acts as a d-pad on touch instead of click: brushing the pad presses directions, clicking adds nothing."
+
+	"group"
+	{
+		"source"	"button_diamond"
+		"bindings"
+		{
+			// Steam uses the Xbox layout (A bottom, B right, X left, Y top);
+			// Switch puts B bottom, A right, Y left, X top → swap to keep
+			// physical positions.
+			"button_a"	"switch_button B"
+			"button_b"	"switch_button A"
+			"button_x"	"switch_button Y"
+			"button_y"	"switch_button X"
+		}
+	}
+
+	"group"
+	{
+		"source"	"switch"
+		"bindings"
+		{
+			"left_bumper"		"switch_button L"
+			"right_bumper"		"switch_button R"
+			"button_escape"		"switch_button MINUS"	// left menu (back)
+			"button_menu"		"switch_button PLUS"	// right menu (start)
+			"button_steam"		"switch_button HOME"	// Steam logo
+			"button_back_left"	"switch_button CAPTURE"	// left grip lever
+			"button_back_right"	"switch_button HOME"	// right grip lever
+		}
+	}
+
+	"group"
+	{
+		"source"	"left_trigger"
+		"mode"		"trigger"
+		"bindings"
+		{
+			"click"	"switch_button ZL"	// full pull
+		}
+	}
+
+	"group"
+	{
+		"source"	"right_trigger"
+		"mode"		"trigger"
+		"bindings"
+		{
+			"click"	"switch_button ZR"
+		}
+	}
+
+	"group"
+	{
+		"source"	"joystick"
+		"mode"		"joystick_move"
+		"bindings"
+		{
+			"click"	"switch_button LSTICK"
+		}
+		"settings"
+		{
+			"output_joystick"	"left"
+		}
+	}
+
+	"group"
+	{
+		"source"	"left_trackpad"
+		"mode"		"dpad"
+		"bindings"
+		{
+			"dpad_north"	"switch_button DPAD_UP"
+			"dpad_south"	"switch_button DPAD_DOWN"
+			"dpad_west"		"switch_button DPAD_LEFT"
+			"dpad_east"		"switch_button DPAD_RIGHT"
+		}
+		"settings"
+		{
+			// Steam's own dpad-mode setting: "1" (the default) presses on
+			// the click quadrants, "0" makes touch position alone drive
+			// the d-pad.
+			"requires_click"	"0"
+		}
+	}
+
+	"group"
+	{
+		"source"	"right_trackpad"
+		"mode"		"joystick_move"
+		"bindings"
+		{
+			"click"	"switch_button RSTICK"
+		}
+		"settings"
+		{
+			"output_joystick"	"right"
+		}
+	}
+}
