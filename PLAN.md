@@ -136,12 +136,25 @@ Implement `src/switch/protocol.rs` (see its doc comments and TODOs):
       `00 00` reports and never starts the 0x80 handshake.
 - [x] Controller appears in "Controllers → Change Grip/Order"; pairing and
       in-game play work (tested with The Entropy Centre).
-- [x] Gotcha #2, fixed 2026-07-19: the Switch retries subcommand 0x21
-      (NFC/IR MCU config) every 32 ms and **drops the controller after
-      ~30–60 s** unless the reply is a full 34-byte MCU state report with
-      its trailing crc byte (format per nxbt); the old short ack caused
-      periodic disconnect + re-pair. Body color also changed to dark blue
-      (the baked SPI image's raspberry showed as a red controller).
+- [ ] Gotcha #2 — periodic disconnects (~every 30–60 s of play, Switch asks
+      to re-pair with L+R). **Fix deployed 2026-07-19 but not yet re-tested
+      on the Switch.** Evidence from the journal (first Switch session):
+      the Switch retried subcommand 0x21 (set NFC/IR MCU config) every
+      32 ms, dozens of times in a row — our reply (short 8-byte ack lifted
+      from simulate_procon.py) didn't satisfy it — then killed the port:
+      hidg write failed with ENOTCONN ("transport endpoint shutdown"),
+      sweam exited, systemd restarted it (Restart counter matched the
+      number of disconnects), fresh enumeration → re-pair prompt. Fix:
+      reply with the full 34-byte MCU state report (status bytes
+      01 00 FF 00 08 00 1B 01, zero padding, trailing crc8 0xC8), ack
+      0xA0, format per nxbt (MIT); plain-ack 0x22 (set MCU state) too.
+      **To verify:** play ≥ 5 min; journal must show no "Host subcommand
+      0x21" bursts and no service restarts (`journalctl -u sweam | grep -c
+      Started`). If it still drops: log the 0x21 args (they carry an MCU
+      sub-command; we may need state-dependent replies — busy/configured
+      states), and check for 0x11 output reports (direct MCU requests) in
+      the raw log. Body color also changed to dark blue (the baked SPI
+      image's raspberry showed as a red controller).
 - [ ] Direct USB-C to the Switch (handheld/tabletop) did **not** work on
       2026-07-19 (dock USB-A works fine). Suspects, in order: C-to-C role/CC
       negotiation (both ports are primarily sinks; the Radxa OTG port may
