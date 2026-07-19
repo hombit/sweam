@@ -2,7 +2,7 @@
 name = "sweam"
 version = "0.1.0"
 edition = "2021"
-license = "BSD-2-Clause"
+license = "MIT"
 description = "Bridge an original Steam Controller to a Nintendo Switch by emulating a Pro Controller over USB gadget"
 
 # zig's linker warns that it ignores rustc's `-Wl,-O1` (deprecated there);

@@ -133,7 +133,7 @@ with `sweam steamcheck --config yourfile.vdf` before playing.
 
 `cargo test && cargo clippy` runs anywhere (Linux-only bits are cfg-gated).
 Roadmap: [PLAN.md](PLAN.md) · protocol notes and hardware test bench:
-[TESTBED.md](TESTBED.md) · license: [BSD-2-Clause](LICENSE).
+[TESTBED.md](TESTBED.md) · license: [MIT](LICENSE).
 
 ## Acknowledgements
 
