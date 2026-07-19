@@ -188,8 +188,10 @@ Implement `src/switch/protocol.rs` (see its doc comments and TODOs):
       session feedback (2026-07-19): right-pad camera feel needs work for
       first-person games (sensitivity/curve options, maybe a trackball-style
       mode instead of recenter-on-touch).
-- [ ] Left-pad **touch position** (ABS_HAT0X/Y) as d-pad instead of click
-      quadrants — requested after the first Switch session.
+- [x] Left-pad **touch position** (ABS_HAT0X/Y) as d-pad instead of click
+      quadrants (2026-07-19) — `settings { requires_click 0 }` on the
+      left_trackpad group, example in configs/touch-dpad.vdf; deployed as
+      the active config on the Radxa.
 - [ ] Investigate importing real Steam controller configs (the client's
       exported VDF layouts) for the subset that binds to gamepad outputs.
 - [x] Controller hotplug in bridge mode (2026-07-19): `sweam steam` now
