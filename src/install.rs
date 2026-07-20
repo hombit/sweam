@@ -10,6 +10,15 @@
 #[cfg(target_os = "linux")]
 pub use imp::{install, uninstall};
 
+/// True when systemd is the init the system booted with. sd_booted(3)
+/// documents the check: systemd creates the /run/systemd/system/ directory
+/// at boot and no other init system does, so its presence means systemd is
+/// PID 1 — merely having systemd installed does not create it. Takes the
+/// directory to probe so tests can cover both branches on any OS.
+fn systemd_is_running_init(probe_dir: &std::path::Path) -> bool {
+    probe_dir.is_dir()
+}
+
 #[cfg(target_os = "linux")]
 mod imp {
     use anyhow::{Context, bail};
@@ -19,9 +28,17 @@ mod imp {
     const DEFAULT_PREFIX: &str = "/opt/sweam";
     const UNIT_NAME: &str = "sweam.service";
     const UNIT_PATH: &str = "/etc/systemd/system/sweam.service";
+    /// Created by systemd at boot; the sd_booted(3) init-detection probe.
+    const SYSTEMD_RUN_DIR: &str = "/run/systemd/system";
 
     pub fn install(config: Option<&str>, prefix: Option<&str>) -> anyhow::Result<()> {
         ensure_root()?;
+        // Check before touching anything: otherwise the files land and the
+        // first systemctl call fails, leaving debris and a confusing error.
+        ensure_systemd_init(
+            "on a non-systemd system, arrange for \"sweam steam\" to run via your init system \
+             (OpenRC, runit, ...) manually instead of using sweam install",
+        )?;
         let prefix = validate_prefix(prefix)?;
         let binary_path = format!("{prefix}/sweam");
         let config_path = format!("{prefix}/config.vdf");
@@ -88,6 +105,14 @@ WantedBy=multi-user.target
 
     pub fn uninstall(prefix: Option<&str>) -> anyhow::Result<()> {
         ensure_root()?;
+        // Without systemd nothing sweam-managed can be running as a service,
+        // so failing fast is safe — but point at the files in case a disk
+        // image carried leftovers over from a systemd install.
+        ensure_systemd_init(
+            "no sweam service can be running here; if leftover files exist, remove \
+             /opt/sweam (or your --prefix directory) and /etc/systemd/system/sweam.service \
+             manually",
+        )?;
         let prefix = validate_prefix(prefix)?;
 
         // Tolerate a partial install: stop/disable only if the unit exists.
@@ -139,6 +164,17 @@ WantedBy=multi-user.target
         Ok(prefix)
     }
 
+    /// Fail with a clear, action-specific message unless systemd is PID 1.
+    fn ensure_systemd_init(hint: &str) -> anyhow::Result<()> {
+        if !super::systemd_is_running_init(Path::new(SYSTEMD_RUN_DIR)) {
+            bail!(
+                "{SYSTEMD_RUN_DIR} is not a directory, so systemd is not the running init \
+                 (see sd_booted(3)); sweam's service management requires systemd as PID 1 — {hint}"
+            );
+        }
+        Ok(())
+    }
+
     fn ensure_root() -> anyhow::Result<()> {
         if unsafe { libc::geteuid() } != 0 {
             bail!("install/uninstall write to /opt and /etc — run as root (sudo)");
@@ -155,5 +191,35 @@ WantedBy=multi-user.target
             bail!("systemctl {args:?} failed with {status}");
         }
         Ok(())
+    }
+}
+
+// Outside the linux-only `imp` module so the tests compile and run on the
+// macOS dev host too; the helper under test is likewise cfg-independent.
+#[cfg(test)]
+mod tests {
+    use super::systemd_is_running_init;
+    use std::path::Path;
+
+    #[test]
+    fn existing_directory_means_systemd_is_init() {
+        // Any existing directory stands in for /run/systemd/system.
+        assert!(systemd_is_running_init(Path::new(env!(
+            "CARGO_MANIFEST_DIR"
+        ))));
+    }
+
+    #[test]
+    fn missing_path_means_no_systemd() {
+        assert!(!systemd_is_running_init(Path::new(
+            "/nonexistent/run/systemd/system"
+        )));
+    }
+
+    #[test]
+    fn plain_file_at_probe_path_means_no_systemd() {
+        // sd_booted(3) requires a directory; a stray file must not count.
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        assert!(!systemd_is_running_init(&manifest));
     }
 }
