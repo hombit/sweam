@@ -1,0 +1,107 @@
+// sweam controller mapping — default layout with the right pad in
+// mouse-like camera mode: finger *motion* deflects the right stick
+// (Steam's "joystick_camera"), instead of the touch position mapping to
+// the stick absolutely. The stick follows finger velocity and recenters
+// when the finger stops or lifts — a trackpad camera for first-person
+// games. Full schema reference: src/steam/config.rs. Run with:
+//   sweam steam --config configs/camera-rightpad.vdf
+"controller_mappings"
+{
+	"version"		"1"
+	"title"			"Trackpad camera right pad"
+	"description"	"Default layout, but right-pad finger motion drives the right stick like a mouse (velocity-based camera) instead of absolute position."
+
+	"group"
+	{
+		"source"	"button_diamond"
+		"bindings"
+		{
+			// Steam uses the Xbox layout (A bottom, B right, X left, Y top);
+			// Switch puts B bottom, A right, Y left, X top → swap to keep
+			// physical positions.
+			"button_a"	"switch_button B"
+			"button_b"	"switch_button A"
+			"button_x"	"switch_button Y"
+			"button_y"	"switch_button X"
+		}
+	}
+
+	"group"
+	{
+		"source"	"switch"
+		"bindings"
+		{
+			"left_bumper"		"switch_button L"
+			"right_bumper"		"switch_button R"
+			"button_escape"		"switch_button MINUS"	// left menu (back)
+			"button_menu"		"switch_button PLUS"	// right menu (start)
+			"button_steam"		"switch_button HOME"	// Steam logo
+			"button_back_left"	"switch_button CAPTURE"	// left grip lever
+			"button_back_right"	"switch_button HOME"	// right grip lever
+		}
+	}
+
+	"group"
+	{
+		"source"	"left_trigger"
+		"mode"		"trigger"
+		"bindings"
+		{
+			"click"	"switch_button ZL"	// full pull
+		}
+	}
+
+	"group"
+	{
+		"source"	"right_trigger"
+		"mode"		"trigger"
+		"bindings"
+		{
+			"click"	"switch_button ZR"
+		}
+	}
+
+	"group"
+	{
+		"source"	"joystick"
+		"mode"		"joystick_move"
+		"bindings"
+		{
+			"click"	"switch_button LSTICK"
+		}
+		"settings"
+		{
+			"output_joystick"	"left"
+		}
+	}
+
+	"group"
+	{
+		"source"	"left_trackpad"
+		"mode"		"dpad"
+		"bindings"
+		{
+			"dpad_north"	"switch_button DPAD_UP"
+			"dpad_south"	"switch_button DPAD_DOWN"
+			"dpad_west"		"switch_button DPAD_LEFT"
+			"dpad_east"		"switch_button DPAD_RIGHT"
+		}
+	}
+
+	"group"
+	{
+		"source"	"right_trackpad"
+		"mode"		"joystick_camera"	// finger motion → stick (vs joystick_move)
+		"bindings"
+		{
+			"click"	"switch_button RSTICK"
+		}
+		"settings"
+		{
+			"output_joystick"	"right"
+			// Camera gain: stick deflection per unit of finger travel;
+			// higher = faster camera. Positive number, default 4.
+			// "sensitivity"	"4"
+		}
+	}
+}

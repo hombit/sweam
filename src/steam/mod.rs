@@ -123,20 +123,26 @@ mod evdev_input {
 
     impl InputSource for EvdevSteamController {
         fn poll(&mut self, state: &mut ControllerState) -> anyhow::Result<()> {
-            let events = match self.device.fetch_events() {
-                Ok(events) => events,
-                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
-                Err(err) => return Err(err).context("Failed to fetch evdev events"),
-            };
-            for event in events {
-                let event_type = event.event_type();
-                if event_type == evdev::EventType::KEY {
-                    self.mapping
-                        .apply_key(state, event.code(), event.value() != 0);
-                } else if event_type == evdev::EventType::ABSOLUTE {
-                    self.mapping.apply_abs(state, event.code(), event.value());
+            match self.device.fetch_events() {
+                Ok(events) => {
+                    for event in events {
+                        let event_type = event.event_type();
+                        if event_type == evdev::EventType::KEY {
+                            self.mapping
+                                .apply_key(state, event.code(), event.value() != 0);
+                        } else if event_type == evdev::EventType::ABSOLUTE {
+                            self.mapping.apply_abs(state, event.code(), event.value());
+                        }
+                    }
                 }
+                // No pending events is the common case — still tick below,
+                // time-based behavior must advance while the input is idle.
+                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(err) => return Err(err).context("Failed to fetch evdev events"),
             }
+            // One time step per poll (~8 ms pump cadence): decays the
+            // camera-mode deflection; a no-op in other modes.
+            self.mapping.tick(state);
             Ok(())
         }
     }

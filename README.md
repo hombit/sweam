@@ -130,6 +130,9 @@ example in [`configs/`](configs/):
 - `swapped-sticks.vdf` — joystick and right pad swap their Switch sticks.
 - `touch-dpad.vdf` — the left pad's *touch* position drives the d-pad
   (no click needed), 8-way with diagonals and a center deadzone.
+- `camera-rightpad.vdf` — the right pad becomes a mouse-like camera:
+  finger *motion* deflects the right stick (velocity-based, recenters when
+  the finger stops or lifts), with a tunable `sensitivity`.
 
 Copy one, edit the `switch_button …` values (names: `A B X Y DPAD_UP
 DPAD_DOWN DPAD_LEFT DPAD_RIGHT L R ZL ZR MINUS PLUS HOME CAPTURE LSTICK

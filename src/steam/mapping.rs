@@ -11,8 +11,9 @@
 //!   and 0 when released;
 //! - left-pad touch position as `ABS_HAT0X/Y` (with `BTN_THUMB` = left pad
 //!   touched) — used by [`LeftPadMode::TouchDpad`], ignored in the default
-//!   click mode; analog triggers as `ABS_HAT2X/Y` — unmapped (we use full
-//!   trigger pulls instead).
+//!   click mode; right-pad touch is `BTN_THUMB2` — used by
+//!   [`RightPadMode::CameraStick`]; analog triggers as `ABS_HAT2X/Y` —
+//!   unmapped (we use full trigger pulls instead).
 //!
 //! [`Mapping::default`] is the built-in layout; `steam::config` builds
 //! custom [`Mapping`]s from Steam-style VDF files. This module works on raw
@@ -72,6 +73,22 @@ const TOUCH_DPAD_DEADZONE: i32 = AXIS_MAX * 3 / 10;
 const SECTOR_TAN_NUM: i64 = 27146;
 const SECTOR_TAN_DEN: i64 = 65536;
 
+/// Default camera-mode sensitivity: virtual stick deflection gained per unit
+/// of finger travel (both in evdev units). At 4.0 a slow, steady swipe of
+/// ~1/6 pad width per tick pins the stick; see [`CAMERA_DECAY`] for how
+/// velocity turns into a sustained deflection.
+pub(crate) const CAMERA_SENSITIVITY_DEFAULT: f32 = 4.0;
+
+/// Fraction of the camera deflection kept per [`Mapping::tick`] (~8 ms), an
+/// exponential decay with time constant ~49 ms (-8 ms / ln 0.85): the stick
+/// recenters ~50 ms after the finger stops. During steady motion the
+/// deflection settles at `velocity_per_tick * sensitivity / (1 - decay)`.
+const CAMERA_DECAY: f32 = 0.85;
+
+/// Decayed deflection below this snaps straight to 0 (well inside host-side
+/// stick deadzones) so the exponential tail doesn't linger forever.
+const CAMERA_STOP: f32 = 64.0;
+
 /// Which Switch stick a physical analog input drives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StickTarget {
@@ -91,6 +108,18 @@ pub enum LeftPadMode {
     TouchDpad,
 }
 
+/// How the right trackpad drives its target stick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RightPadMode {
+    /// Touch position maps directly to stick deflection — the default.
+    AbsoluteStick,
+    /// Finger *motion* deflects the stick (mouse-like camera): each touch
+    /// delta accumulates into a virtual deflection that decays back to
+    /// center, so the stick follows finger velocity and stops when the
+    /// finger stops. Steam's `joystick_camera` mode.
+    CameraStick,
+}
+
 /// A complete Steam Controller → Pro Controller layout.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Mapping {
@@ -102,10 +131,24 @@ pub struct Mapping {
     pub right_pad: StickTarget,
     /// How the left pad drives the d-pad.
     pub left_pad: LeftPadMode,
+    /// How the right pad drives its stick.
+    pub right_pad_mode: RightPadMode,
+    /// Camera-mode gain: stick deflection per unit of finger travel.
+    pub camera_sensitivity: f32,
     /// Last seen left-pad touch position (`ABS_HAT0X/Y`), tracked so a
     /// single-axis event can re-sectorize with both coordinates. Runtime
     /// state, only meaningful in [`LeftPadMode::TouchDpad`].
     left_pad_touch: (i32, i32),
+    /// Whether the right pad is currently touched (`BTN_THUMB2`). Runtime
+    /// state, only meaningful in [`RightPadMode::CameraStick`].
+    right_pad_touched: bool,
+    /// Previous right-pad touch sample per axis; `None` right after a touch
+    /// (or lift) so the first sample can't emit a delta from a stale
+    /// position. Runtime state for [`RightPadMode::CameraStick`].
+    right_pad_prev: (Option<i32>, Option<i32>),
+    /// Camera-mode virtual deflection in evdev units, decayed by
+    /// [`Mapping::tick`]. Runtime state for [`RightPadMode::CameraStick`].
+    camera_deflection: (f32, f32),
 }
 
 impl Mapping {
@@ -116,7 +159,12 @@ impl Mapping {
             joystick: StickTarget::None,
             right_pad: StickTarget::None,
             left_pad: LeftPadMode::ClickDpad,
+            right_pad_mode: RightPadMode::AbsoluteStick,
+            camera_sensitivity: CAMERA_SENSITIVITY_DEFAULT,
             left_pad_touch: (0, 0),
+            right_pad_touched: false,
+            right_pad_prev: (None, None),
+            camera_deflection: (0.0, 0.0),
         }
     }
 
@@ -131,10 +179,20 @@ impl Mapping {
 
     /// Apply one `EV_KEY` event.
     pub fn apply_key(&mut self, state: &mut ControllerState, code: u16, pressed: bool) {
-        // Right pad released: snap its stick back to center in case the
-        // last position event didn't return to 0.
+        // Right pad touched/released. In camera mode a lift zeroes the
+        // deflection immediately (no drift after the finger leaves) and
+        // forgets the tracked position (no stale delta on the next touch);
+        // in absolute mode a lift snaps the stick back to center in case
+        // the last position event didn't return to 0.
         if code == BTN_THUMB2 {
-            if !pressed {
+            if self.right_pad_mode == RightPadMode::CameraStick {
+                self.right_pad_touched = pressed;
+                self.right_pad_prev = (None, None);
+                if !pressed {
+                    self.camera_deflection = (0.0, 0.0);
+                    self.set_camera_stick(state);
+                }
+            } else if !pressed {
                 match self.right_pad {
                     StickTarget::LeftStick => state.left_stick = StickState::default(),
                     StickTarget::RightStick => state.right_stick = StickState::default(),
@@ -182,6 +240,12 @@ impl Mapping {
             }
             return;
         }
+        // Right-pad position in camera mode: accumulate motion deltas
+        // instead of mapping the position itself.
+        if (code == ABS_RX || code == ABS_RY) && self.right_pad_mode == RightPadMode::CameraStick {
+            self.apply_camera_abs(state, code == ABS_RX, value);
+            return;
+        }
         let (target, x_axis) = match code {
             ABS_X => (self.joystick, true),
             ABS_Y => (self.joystick, false),
@@ -201,6 +265,57 @@ impl Mapping {
         } else {
             stick.y = scale_y(value);
         }
+    }
+
+    /// Advance time-based behavior by one pump iteration (~8 ms): in
+    /// [`RightPadMode::CameraStick`] decay the virtual deflection toward
+    /// center (see [`CAMERA_DECAY`]). Cheap no-op in every other mode and
+    /// when the deflection is already centered.
+    pub fn tick(&mut self, state: &mut ControllerState) {
+        if self.right_pad_mode != RightPadMode::CameraStick || self.camera_deflection == (0.0, 0.0)
+        {
+            return;
+        }
+        for deflection in [&mut self.camera_deflection.0, &mut self.camera_deflection.1] {
+            *deflection *= CAMERA_DECAY;
+            if f32::abs(*deflection) < CAMERA_STOP {
+                *deflection = 0.0;
+            }
+        }
+        self.set_camera_stick(state);
+    }
+
+    /// One right-pad position sample in camera mode: the delta from the
+    /// previous sample (scaled by the sensitivity) accumulates into the
+    /// virtual deflection. Samples while untouched are ignored; the first
+    /// sample after a touch only records the position.
+    fn apply_camera_abs(&mut self, state: &mut ControllerState, x_axis: bool, value: i32) {
+        if !self.right_pad_touched {
+            return;
+        }
+        let (prev, deflection) = if x_axis {
+            (&mut self.right_pad_prev.0, &mut self.camera_deflection.0)
+        } else {
+            (&mut self.right_pad_prev.1, &mut self.camera_deflection.1)
+        };
+        if let Some(prev_value) = *prev {
+            let delta = (value - prev_value) as f32 * self.camera_sensitivity;
+            *deflection = f32::clamp(*deflection + delta, -(AXIS_MAX as f32), AXIS_MAX as f32);
+        }
+        *prev = Some(value);
+        self.set_camera_stick(state);
+    }
+
+    /// Write the camera deflection out to whatever stick the right pad
+    /// drives.
+    fn set_camera_stick(&self, state: &mut ControllerState) {
+        let stick = match self.right_pad {
+            StickTarget::LeftStick => &mut state.left_stick,
+            StickTarget::RightStick => &mut state.right_stick,
+            StickTarget::None => return,
+        };
+        stick.x = scale_x(self.camera_deflection.0 as i32);
+        stick.y = scale_y(self.camera_deflection.1 as i32);
     }
 
     /// Press/release whatever the four `BTN_DPAD_*` codes are bound to
@@ -478,6 +593,99 @@ mod tests {
         assert_eq!(state.left_stick.x, 4095, "pad drives the left stick");
         mapping.apply_key(&mut state, BTN_THUMB2, false);
         assert_eq!(state.left_stick.x, StickState::CENTER);
+    }
+
+    /// Default layout with the right pad switched to camera mode.
+    fn camera_mapping() -> Mapping {
+        Mapping {
+            right_pad_mode: RightPadMode::CameraStick,
+            ..Mapping::default()
+        }
+    }
+
+    #[test]
+    fn camera_motion_deflects_toward_the_motion() {
+        let mut mapping = camera_mapping();
+        let mut state = ControllerState::default();
+        mapping.apply_key(&mut state, BTN_THUMB2, true);
+        // Rightward finger motion → stick right; upward (evdev negative Y)
+        // → stick up (Switch max).
+        mapping.apply_abs(&mut state, ABS_RX, 1000);
+        mapping.apply_abs(&mut state, ABS_RY, 2000);
+        mapping.apply_abs(&mut state, ABS_RX, 4000);
+        mapping.apply_abs(&mut state, ABS_RY, -3000);
+        assert!(state.right_stick.x > StickState::CENTER);
+        assert!(state.right_stick.y > StickState::CENTER);
+        assert_eq!(
+            state.left_stick.x,
+            StickState::CENTER,
+            "left stick untouched"
+        );
+        // Leftward motion pulls the deflection back down.
+        let was = state.right_stick.x;
+        mapping.apply_abs(&mut state, ABS_RX, 3000);
+        assert!(state.right_stick.x < was);
+    }
+
+    #[test]
+    fn camera_deflection_decays_to_center() {
+        let mut mapping = camera_mapping();
+        let mut state = ControllerState::default();
+        mapping.apply_key(&mut state, BTN_THUMB2, true);
+        mapping.apply_abs(&mut state, ABS_RX, 0);
+        mapping.apply_abs(&mut state, ABS_RX, 5000);
+        let mut last = state.right_stick.x;
+        assert!(last > StickState::CENTER);
+        // Finger holds still: each tick moves the stick monotonically back
+        // toward center, reaching it exactly (snap-to-zero) within ~1 s.
+        for _ in 0..125 {
+            mapping.tick(&mut state);
+            assert!(state.right_stick.x <= last);
+            last = state.right_stick.x;
+        }
+        assert_eq!(state.right_stick.x, StickState::CENTER);
+        assert_eq!(state.right_stick.y, StickState::CENTER);
+    }
+
+    #[test]
+    fn camera_release_zeroes_immediately_without_stale_delta() {
+        let mut mapping = camera_mapping();
+        let mut state = ControllerState::default();
+        mapping.apply_key(&mut state, BTN_THUMB2, true);
+        mapping.apply_abs(&mut state, ABS_RX, 0);
+        mapping.apply_abs(&mut state, ABS_RX, 20000);
+        assert!(state.right_stick.x > StickState::CENTER);
+        // Lift: centered right away, no decay needed.
+        mapping.apply_key(&mut state, BTN_THUMB2, false);
+        assert_eq!(state.right_stick, StickState::default());
+        // Retouch far from the old position: the first sample must not
+        // replay the jump from the stale coordinate.
+        mapping.apply_key(&mut state, BTN_THUMB2, true);
+        mapping.apply_abs(&mut state, ABS_RX, -20000);
+        assert_eq!(state.right_stick, StickState::default());
+        // But the second sample moves as usual.
+        mapping.apply_abs(&mut state, ABS_RX, -15000);
+        assert!(state.right_stick.x > StickState::CENTER);
+    }
+
+    #[test]
+    fn camera_ignores_position_while_untouched() {
+        let mut mapping = camera_mapping();
+        let mut state = ControllerState::default();
+        mapping.apply_abs(&mut state, ABS_RX, 10000);
+        mapping.apply_abs(&mut state, ABS_RX, 20000);
+        assert_eq!(state.right_stick, StickState::default());
+    }
+
+    #[test]
+    fn absolute_mode_is_unaffected_by_camera_machinery() {
+        let mut mapping = Mapping::default();
+        let mut state = ControllerState::default();
+        mapping.apply_abs(&mut state, ABS_RX, AXIS_MAX);
+        assert_eq!(state.right_stick.x, 4095, "position maps absolutely");
+        // tick is a no-op outside camera mode.
+        mapping.tick(&mut state);
+        assert_eq!(state.right_stick.x, 4095);
     }
 
     #[test]
