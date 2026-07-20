@@ -25,9 +25,12 @@ SSH addresses and bench wiring: see `TESTBED.md`.
 
 ```
 src/main.rs            gadget/protocol wire-up + signal-safe shutdown
-src/cli.rs             CLI: steam | manual | steamcheck | hostcheck; detect
-                       everything, override anything (--udc --configfs
-                       --skip-modprobe --config --evdev)
+src/cli.rs             CLI: steam | manual | steamcheck | hostcheck |
+                       install | uninstall; detect everything, override
+                       anything (--udc --configfs --skip-modprobe --config
+                       --evdev --prefix)
+src/install.rs         `sweam install/uninstall`: /opt/sweam + systemd unit
+                       running `sweam steam` at boot (headless use)
 src/state.rs           ControllerState/Button — shared intermediate representation
 src/manual.rs          `sweam manual`: Pro Controller inputs typed on stdin (testing)
 src/steamcheck.rs      `sweam steamcheck`: print parsed Steam Controller inputs

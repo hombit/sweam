@@ -70,15 +70,31 @@ sudo sweam steam --config configs/swapped-sticks.vdf   # custom mapping
 sweam help                        # full CLI reference
 ```
 
-Turn the controller on (Steam button); sweam picks it up via the dongle and
-streams it to the host. Ctrl-C exits cleanly and removes the USB gadget.
+Turn the controller on (Steam button) whenever — sweam picks it up via the
+dongle within a second, and survives it sleeping and coming back. Ctrl-C
+exits cleanly and removes the USB gadget.
+
+### Run at boot (headless, e.g. at the Switch)
+
+```sh
+sudo sweam install --config configs/default.vdf   # /opt/sweam + systemd unit
+sudo sweam uninstall                              # stop and remove it all
+```
+
+`install` copies the binary (and the config) to `/opt/sweam` (`--prefix DIR`
+to change), writes a `sweam.service` systemd unit running `sweam steam` at
+boot with automatic restarts, and starts it. Re-run `install` to upgrade.
+Logs: `sudo journalctl -u sweam -f`. On a Switch, also enable **System
+Settings → Controllers and Sensors → Pro Controller Wired Communication** —
+off by default, and without it the Switch ignores USB controllers.
 
 ### Test without a Switch, or without a controller
 
 - `sudo sweam manual` — the same gadget, but you type the inputs:
   `press a`, `release a`, `stick l 0.5 -1`, `neutral`.
-- `sudo sweam steamcheck` — no gadget: prints every parsed controller input
+- `sweam steamcheck` — no gadget: prints every parsed controller input
   (with the active mapping applied) so you can check buttons and sticks.
+  Needs root *or* membership in the `input` group (it only reads evdev).
 - `sudo sweam hostcheck [/dev/hidrawN]` — run this **on a second Linux
   machine** connected to the SBC's OTG port: it performs the same USB
   handshake a Switch does and prints every decoded input it receives.

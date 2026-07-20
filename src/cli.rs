@@ -123,7 +123,12 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             "--evdev" => set_once(&mut evdev, value("--evdev")?, "--evdev")?,
             "--udc" => set_once(&mut udc, value("--udc")?, "--udc")?,
             "--configfs" => set_once(&mut configfs, value("--configfs")?, "--configfs")?,
-            "--skip-modprobe" => skip_modprobe = true,
+            "--skip-modprobe" => {
+                if inline.is_some() {
+                    return Err("--skip-modprobe takes no value".into());
+                }
+                skip_modprobe = true;
+            }
             "--prefix" => set_once(&mut prefix, value("--prefix")?, "--prefix")?,
             other if other.starts_with('-') => {
                 return Err(format!("unknown option {other:?}"));
@@ -344,6 +349,7 @@ mod tests {
             ("install --evdev /dev/input/event1", "does not apply"),
             ("install stray", "unexpected argument"),
             ("uninstall --config a.vdf", "does not apply"),
+            ("steam --skip-modprobe=false", "takes no value"),
         ] {
             let err = parse_str(line).unwrap_err();
             assert!(err.contains(needle), "{line:?} -> {err:?}");

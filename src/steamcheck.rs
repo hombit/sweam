@@ -23,15 +23,7 @@ pub fn run(mapping: crate::steam::mapping::Mapping, evdev: Option<String>) -> an
                 match EvdevSteamController::open(mapping.clone(), evdev.as_deref()) {
                     Ok(controller) => break controller,
                     // Waiting can't fix missing permissions — exit instead.
-                    Err(err)
-                        if err.chain().any(|cause| {
-                            cause.downcast_ref::<std::io::Error>().is_some_and(|io| {
-                                io.kind() == std::io::ErrorKind::PermissionDenied
-                            })
-                        }) =>
-                    {
-                        return Err(err);
-                    }
+                    Err(err) if crate::steam::is_permission_error(&err) => return Err(err),
                     Err(err) => {
                         if !waiting {
                             println!("Waiting for the Steam Controller (turn it on?): {err:#}");

@@ -22,9 +22,16 @@ mod imp {
 
     pub fn install(config: Option<&str>, prefix: Option<&str>) -> anyhow::Result<()> {
         ensure_root()?;
-        let prefix = prefix.unwrap_or(DEFAULT_PREFIX);
+        let prefix = validate_prefix(prefix)?;
         let binary_path = format!("{prefix}/sweam");
         let config_path = format!("{prefix}/config.vdf");
+
+        // A config typo would otherwise surface only as a headless boot-time
+        // crash loop at the Switch — validate before installing anything.
+        if let Some(config) = config {
+            crate::steam::config::load(config)
+                .with_context(|| format!("Refusing to install a config that fails to load: {config}"))?;
+        }
 
         std::fs::create_dir_all(prefix).with_context(|| format!("Failed to create {prefix}"))?;
 
@@ -38,14 +45,15 @@ mod imp {
             .with_context(|| format!("Failed to move {tmp} to {binary_path}"))?;
         println!("Installed {binary_path} (from {})", exe.display());
 
+        // Quote the paths: systemd splits ExecStart on unquoted whitespace.
         let exec_start = match config {
             Some(config) => {
                 std::fs::copy(config, &config_path)
                     .with_context(|| format!("Failed to copy {config} to {config_path}"))?;
                 println!("Installed {config_path} (from {config})");
-                format!("{binary_path} steam --config {config_path}")
+                format!("\"{binary_path}\" steam --config \"{config_path}\"")
             }
-            None => format!("{binary_path} steam"),
+            None => format!("\"{binary_path}\" steam"),
         };
 
         let unit = format!(
@@ -79,7 +87,7 @@ WantedBy=multi-user.target
 
     pub fn uninstall(prefix: Option<&str>) -> anyhow::Result<()> {
         ensure_root()?;
-        let prefix = prefix.unwrap_or(DEFAULT_PREFIX);
+        let prefix = validate_prefix(prefix)?;
 
         // Tolerate a partial install: stop/disable only if the unit exists.
         if Path::new(UNIT_PATH).exists() {
@@ -92,14 +100,42 @@ WantedBy=multi-user.target
             println!("No {UNIT_PATH}; nothing to stop");
         }
 
-        if Path::new(prefix).exists() {
-            std::fs::remove_dir_all(prefix)
-                .with_context(|| format!("Failed to remove {prefix}"))?;
-            println!("Removed {prefix}");
-        } else {
-            println!("No {prefix}; nothing to remove");
+        // Remove only the files we installed, then the directory if it is
+        // empty — never recursively: `--prefix /opt` must not nuke /opt.
+        let mut removed_any = false;
+        for file in [format!("{prefix}/sweam"), format!("{prefix}/config.vdf")] {
+            if Path::new(&file).exists() {
+                std::fs::remove_file(&file).with_context(|| format!("Failed to remove {file}"))?;
+                println!("Removed {file}");
+                removed_any = true;
+            }
+        }
+        match std::fs::remove_dir(prefix) {
+            Ok(()) => println!("Removed {prefix}"),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                if !removed_any {
+                    println!("No {prefix}; nothing to remove");
+                }
+            }
+            Err(err) if err.raw_os_error() == Some(libc::ENOTEMPTY) => {
+                println!("Kept {prefix}: it contains files sweam did not install");
+            }
+            Err(err) => return Err(err).with_context(|| format!("Failed to remove {prefix}")),
         }
         Ok(())
+    }
+
+    /// Installation prefixes must be absolute (systemd requires an absolute
+    /// ExecStart) and quotable into the unit file.
+    fn validate_prefix(prefix: Option<&str>) -> anyhow::Result<&str> {
+        let prefix = prefix.unwrap_or(DEFAULT_PREFIX);
+        if !prefix.starts_with('/') || prefix.ends_with('/') {
+            bail!("--prefix must be an absolute path without a trailing slash, got {prefix:?}");
+        }
+        if prefix.contains('"') || prefix.contains('\n') {
+            bail!("--prefix must not contain quotes or newlines, got {prefix:?}");
+        }
+        Ok(prefix)
     }
 
     fn ensure_root() -> anyhow::Result<()> {

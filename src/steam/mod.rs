@@ -19,6 +19,18 @@ pub trait InputSource {
 #[cfg(target_os = "linux")]
 pub use evdev_input::EvdevSteamController;
 
+/// Whether an error from [`EvdevSteamController::open`] is a permission
+/// problem (its chain carries an `io::Error` of kind `PermissionDenied`).
+/// Waiting/retrying can't fix those — callers should exit with the hint.
+#[cfg(target_os = "linux")]
+pub fn is_permission_error(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::PermissionDenied)
+    })
+}
+
 #[cfg(target_os = "linux")]
 mod evdev_input {
     use super::{mapping, ControllerState, InputSource};

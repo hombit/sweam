@@ -28,6 +28,10 @@ use crate::switch::report::{self, Report, REPORT_LENGTH};
 /// Locally-administered MAC in the IANA documentation range (from mzyy94).
 pub const MAC_ADDRESS: [u8; 6] = [0x00, 0x00, 0x5E, 0x00, 0x53, 0x5E];
 
+/// Largest SPI read a real controller serves per request (hid-nintendo's
+/// `JC_SPI_MAX_TRANSFER`); also what fits a 64-byte `0x21` reply.
+const MAX_SPI_READ: usize = 0x1D;
+
 /// `0x80` USB command IDs (second byte of a `0x80 ..` output report).
 /// Names follow `JC_USB_CMD_*` in hid-nintendo.c.
 ///
@@ -214,6 +218,7 @@ impl Protocol {
             }
             // No response; the host now expects the input stream.
             0x04 => {
+                self.flush_raw_repeats();
                 println!("Host USB command 0x04 (HID-only) — input stream on");
                 self.streaming = true;
                 vec![]
@@ -253,6 +258,7 @@ impl Protocol {
             // Set input report mode: 0x30 = standard full mode.
             0x03 => {
                 if args.first() == Some(&0x30) {
+                    self.flush_raw_repeats();
                     self.streaming = true;
                 }
                 (0x80, vec![])
@@ -260,11 +266,14 @@ impl Protocol {
             // Trigger buttons elapsed time.
             0x04 => (0x83, vec![]),
             // SPI flash read: args are addr (LE u32) + length; reply echoes
-            // them followed by the data.
+            // them followed by the data. Clamp the length to the real
+            // controller's per-read cap: an unclamped 255 would overflow
+            // the 64-byte reply report (a host-triggerable panic).
             0x10 if args.len() >= 5 => {
                 let addr = u32::from_le_bytes([args[0], args[1], args[2], args[3]]) as usize;
-                let len = args[4] as usize;
+                let len = usize::min(args[4] as usize, MAX_SPI_READ);
                 let mut payload = args[..5].to_vec();
+                payload[4] = len as u8;
                 payload.extend_from_slice(&spi_read(addr, len));
                 (0x90, payload)
             }
@@ -345,6 +354,29 @@ mod tests {
 
     fn handle(protocol: &mut Protocol, data: &[u8]) -> Vec<Report> {
         protocol.handle_output_report(data, &ControllerState::default())
+    }
+
+    #[test]
+    fn oversized_spi_read_is_clamped_not_a_panic() {
+        // A hostile/buggy host may request up to 255 bytes; unclamped this
+        // overflowed the 64-byte reply report and panicked the service.
+        let mut p = Protocol::new();
+        let replies = handle(&mut p, &subcmd(0x10, &[0x00, 0x60, 0x00, 0x00, 0xFF]));
+        assert_eq!(replies.len(), 1);
+        let r = &replies[0];
+        assert_eq!(r[13], 0x90);
+        assert_eq!(r[14], 0x10);
+        assert_eq!(r[19], MAX_SPI_READ as u8, "echoed length is clamped");
+    }
+
+    #[test]
+    fn usb_stream_off_stops_streaming() {
+        let mut p = Protocol::new();
+        handle(&mut p, &out(&[0x80, 0x04]));
+        assert!(p.streaming());
+        let replies = handle(&mut p, &out(&[0x80, 0x05]));
+        assert!(replies.is_empty());
+        assert!(!p.streaming());
     }
 
     #[test]

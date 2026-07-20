@@ -135,21 +135,35 @@ fn main() -> anyhow::Result<()> {
     let mapping = (!manual_mode)
         .then(|| load_mapping(gadget_args.config.as_deref()))
         .transpose()?;
-    let open_controller = || -> Option<Box<dyn steam::InputSource>> {
-        let mapping = mapping.clone()?;
-        steam::EvdevSteamController::open(mapping, gadget_args.evdev.as_deref())
-            .map(|controller| Box::new(controller) as Box<dyn steam::InputSource>)
-            .ok()
+    let open_controller = || -> anyhow::Result<Option<Box<dyn steam::InputSource>>> {
+        let Some(mapping) = mapping.clone() else {
+            return Ok(None);
+        };
+        match steam::EvdevSteamController::open(mapping, gadget_args.evdev.as_deref()) {
+            Ok(controller) => Ok(Some(Box::new(controller) as Box<dyn steam::InputSource>)),
+            // Retrying can't fix permissions — fail the whole bridge.
+            Err(err) if steam::is_permission_error(&err) => Err(err),
+            Err(_) => Ok(None),
+        }
     };
     let mut input: Option<Box<dyn steam::InputSource>> = if manual_mode {
         Some(Box::new(manual::ManualInput::new()))
     } else {
-        let controller = open_controller();
+        let controller = open_controller()?;
         if controller.is_none() {
             eprintln!("No controller yet; streaming neutral inputs until it appears");
         }
         controller
     };
+
+    // Poison-tolerant lock: our shared state is valid after any panic (all
+    // updates are single writes), and unwrapping a PoisonError would turn
+    // one panic into a cascade of misleading secondary crashes.
+    fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+        mutex
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 
     // Reader thread: host output reports in, protocol replies out. On I/O
     // errors it stops the pump loop below so main returns and Drop tears the
@@ -160,7 +174,12 @@ fn main() -> anyhow::Result<()> {
             let mut buf = [0u8; switch::report::REPORT_LENGTH];
             loop {
                 let n = match reader.read(&mut buf) {
-                    Ok(0) => continue,
+                    // 0 bytes = EOF-like: treat as the host going away, not
+                    // a value to retry (that would spin at 100% CPU).
+                    Ok(0) => {
+                        eprintln!("hidg read returned 0 bytes (host gone?)");
+                        break;
+                    }
                     Ok(n) => n,
                     Err(err) => {
                         eprintln!("Failed to read from hidg (host gone?): {err}");
@@ -168,12 +187,12 @@ fn main() -> anyhow::Result<()> {
                     }
                 };
                 let replies = {
-                    let mut protocol = protocol.lock().unwrap();
-                    let state = state.lock().unwrap();
+                    let mut protocol = lock(&protocol);
+                    let state = lock(&state);
                     protocol.handle_output_report(&buf[..n], &state)
                 };
                 for reply in replies {
-                    if let Err(err) = writer.lock().unwrap().write_all(&reply) {
+                    if let Err(err) = lock(&writer).write_all(&reply) {
                         eprintln!("Failed to write reply to hidg: {err}");
                         RUNNING.store(false, Ordering::SeqCst);
                         return;
@@ -191,15 +210,15 @@ fn main() -> anyhow::Result<()> {
         std::thread::sleep(REPORT_INTERVAL);
         // Hotplug: while no controller is open, retry once a second.
         if input.is_none() && !manual_mode && last_retry.elapsed() >= Duration::from_secs(1) {
-            input = open_controller();
+            input = open_controller()?;
             last_retry = std::time::Instant::now();
         }
         let report = {
-            let mut protocol = protocol.lock().unwrap();
+            let mut protocol = lock(&protocol);
             if !protocol.streaming() {
                 continue;
             }
-            let mut state = state.lock().unwrap();
+            let mut state = lock(&state);
             if let Some(controller) = input.as_mut() {
                 if let Err(err) = controller.poll(&mut state) {
                     eprintln!("Controller lost, streaming neutral inputs: {err:#}");
@@ -209,11 +228,19 @@ fn main() -> anyhow::Result<()> {
             }
             protocol.next_input_report(&state)
         };
-        writer
-            .lock()
-            .unwrap()
-            .write_all(&report)
-            .context("Failed to write input report to hidg")?;
+        if let Err(err) = lock(&writer).write_all(&report) {
+            // The host cutting the connection (unplug, Switch sleeping) is
+            // expected operation, not a failure: exit cleanly so the journal
+            // stays green and systemd restarts us for a fresh enumeration.
+            if matches!(
+                err.raw_os_error(),
+                Some(libc::ENOTCONN | libc::ESHUTDOWN | libc::EPIPE)
+            ) {
+                eprintln!("Host disconnected ({err}); exiting for a fresh enumeration");
+                break;
+            }
+            return Err(err).context("Failed to write input report to hidg");
+        }
     }
     println!("Shutting down; removing the gadget…");
     Ok(())
