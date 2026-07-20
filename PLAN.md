@@ -136,9 +136,9 @@ Implement `src/switch/protocol.rs` (see its doc comments and TODOs):
       `00 00` reports and never starts the 0x80 handshake.
 - [x] Controller appears in "Controllers → Change Grip/Order"; pairing and
       in-game play work (tested with The Entropy Centre).
-- [ ] Gotcha #2 — periodic disconnects (~every 30–60 s of play, Switch asks
-      to re-pair with L+R). **Fix deployed 2026-07-19 but not yet re-tested
-      on the Switch.** Evidence from the journal (first Switch session):
+- [x] Gotcha #2 — periodic disconnects (~every 30–60 s of play, Switch asks
+      to re-pair with L+R). **Fix verified on the Switch 2026-07-20: no
+      disconnects.** Evidence from the journal (first Switch session):
       the Switch retried subcommand 0x21 (set NFC/IR MCU config) every
       32 ms, dozens of times in a row — our reply (short 8-byte ack lifted
       from simulate_procon.py) didn't satisfy it — then killed the port:
