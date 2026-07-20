@@ -212,9 +212,32 @@ Implement `src/switch/protocol.rs` (see its doc comments and TODOs):
 
 ## Phase 6 — gyro passthrough
 
-- [ ] Read Steam Controller IMU (raw hidraw input reports).
-- [ ] Fill the 3×12-byte IMU sample fields of the 0x30 report (bytes 13..49),
-      with axis remapping and scale per dekuNukem `imu_sensor_notes.md`.
+- [x] Switch/gadget half (2026-07-20, committed, **not yet bench-verified**):
+      `ImuSample` ring in `ControllerState`; 0x30 reports carry the 3 IMU
+      frames once the host enables the IMU (subcommand 0x40, gated in
+      `Protocol`); `sweam manual` gained `gyro x y z` (dps) / `accel x y z`
+      (g); `sweam hostcheck` sends IMU-enable and prints decoded motion.
+      **Next: bench-verify** — Radxa: stop the service, run `sweam manual`
+      (FIFO trick in TESTBED.md); Pi: `sweam hostcheck`; inject
+      `gyro 100 0 0` and expect an `imu … gyro=(+100.0,…)` line. Binary was
+      built but NOT deployed (Radxa went offline mid-scp) — deploy first.
+- [ ] Steam Controller half — **full research in Notes.md ("Steam
+      Controller IMU over hidraw", 2026-07-20)**, byte-exact. Highlights:
+      enable via unnumbered feature report 0x87, register 0x30 = IMU mode
+      bitmask (0x14 = quat+gyro is the proven wireless combo; raw accel over
+      the dongle needs hardware verification — SDL has a FIXME); input
+      packet type 0x01: accel s16le at offsets 28/30/32, gyro 34/36/38,
+      quat 40-46; ±2000 dps, ±2 g full scale. **Architecture constraint:
+      opening the hid-steam hidraw node makes hid-steam unregister its
+      evdev device** — so the hidraw input source must parse buttons AND
+      IMU from the raw 0x01 packets (evdev + hidraw concurrently is
+      impossible). Implement as a new `InputSource` (raw hidraw) replacing
+      the evdev one when gyro is requested; scale to Pro units
+      (`ImuSample::ACCEL_PER_G`/`GYRO_PER_DPS`), axis remap needs hardware
+      tuning. License-safe bases: ynsta/steamcontroller (MIT), SDL steam
+      driver (zlib); hid-steam.c/sc-controller are GPL — facts only.
+- [ ] Wire the Switch side end-to-end on the real Switch (motion game or
+      the Switch's own gyro calibration screen).
 
 ## Appendix — Bluetooth: assessed, deferred
 
