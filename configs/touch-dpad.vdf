@@ -35,8 +35,10 @@
 			"button_escape"		"switch_button MINUS"	// left menu (back)
 			"button_menu"		"switch_button PLUS"	// right menu (start)
 			"button_steam"		"switch_button HOME"	// Steam logo
-			"button_back_left"	"switch_button CAPTURE"	// left grip lever
-			"button_back_right"	"switch_button HOME"	// right grip lever
+			// Grip levers unbound: too easy to squeeze by accident
+			// (Home stays available on the Steam logo button).
+			"button_back_left"	"none"			// left grip lever
+			"button_back_right"	"none"			// right grip lever
 		}
 	}
 
