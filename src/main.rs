@@ -223,12 +223,12 @@ fn main() -> anyhow::Result<()> {
                 continue;
             }
             let mut state = lock(&state);
-            if let Some(controller) = input.as_mut() {
-                if let Err(err) = controller.poll(&mut state) {
-                    eprintln!("Controller lost, streaming neutral inputs: {err:#}");
-                    input = None;
-                    *state = state::ControllerState::default();
-                }
+            if let Some(controller) = input.as_mut()
+                && let Err(err) = controller.poll(&mut state)
+            {
+                eprintln!("Controller lost, streaming neutral inputs: {err:#}");
+                input = None;
+                *state = state::ControllerState::default();
             }
             protocol.next_input_report(&state)
         };

@@ -1,0 +1,27 @@
+repos:
+  - repo: local
+    hooks:
+      - id: fmt
+        name: cargo fmt --check
+        entry: cargo fmt --check
+        language: system
+        files: (\.rs$|^Cargo\.(toml|lock)$)
+        pass_filenames: false
+      - id: clippy
+        name: cargo clippy
+        entry: cargo clippy --all-targets -- -D warnings
+        language: system
+        files: (\.rs$|^Cargo\.(toml|lock)$)
+        pass_filenames: false
+      - id: clippy-linux
+        name: cargo clippy (aarch64-linux)
+        entry: cargo clippy --target aarch64-unknown-linux-gnu --all-targets -- -D warnings
+        language: system
+        files: (\.rs$|^Cargo\.(toml|lock)$)
+        pass_filenames: false
+      - id: test
+        name: cargo test
+        entry: cargo test
+        language: system
+        files: (\.rs$|^Cargo\.(toml|lock)$)
+        pass_filenames: false

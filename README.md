@@ -153,6 +153,9 @@ with `sweam steamcheck --config yourfile.vdf` before playing.
 ## Development
 
 `cargo test && cargo clippy` runs anywhere (Linux-only bits are cfg-gated).
+Pre-commit hooks (fmt, clippy for both targets, tests): install
+[pre-commit](https://pre-commit.com) (`pipx install pre-commit` or run via
+`uvx pre-commit`), then `pre-commit install`.
 Roadmap: [PLAN.md](PLAN.md) · protocol notes and hardware test bench:
 [TESTBED.md](TESTBED.md) · license: [MIT](LICENSE).
 
