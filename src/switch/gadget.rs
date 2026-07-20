@@ -7,7 +7,7 @@
 //! peripheral mode (on the Radxa Zero 3E: `fcc00000.usb`, enabled via the
 //! rsetup OTG-peripheral overlay — see PLAN.md phase 0).
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -269,7 +269,7 @@ fn modprobe(module: &str) -> anyhow::Result<()> {
                 not_found = Some(err);
             }
             Err(err) => {
-                return Err(err).with_context(|| format!("Failed to run {command} {module}"))
+                return Err(err).with_context(|| format!("Failed to run {command} {module}"));
             }
         }
     }

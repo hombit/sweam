@@ -66,11 +66,11 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Hostcheck { device } => return hostcheck::run(device.as_deref()),
         cli::Command::Install { config, prefix } => {
-            return install::install(config.as_deref(), prefix.as_deref())
+            return install::install(config.as_deref(), prefix.as_deref());
         }
         cli::Command::Uninstall { prefix } => return install::uninstall(prefix.as_deref()),
         cli::Command::Steamcheck { config, evdev } => {
-            return steamcheck::run(load_mapping(config.as_deref())?, evdev)
+            return steamcheck::run(load_mapping(config.as_deref())?, evdev);
         }
         cli::Command::Steam(args) => (args, false),
         cli::Command::Manual(args) => (args, true),
@@ -110,7 +110,11 @@ fn main() -> anyhow::Result<()> {
                 if state != last {
                     println!(
                         "USB state: {}",
-                        if state.is_empty() { "(unreadable)" } else { &state }
+                        if state.is_empty() {
+                            "(unreadable)"
+                        } else {
+                            &state
+                        }
                     );
                     last = state;
                 }

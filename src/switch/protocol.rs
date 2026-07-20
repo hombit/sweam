@@ -23,7 +23,7 @@
 //! - dekuNukem/Nintendo_Switch_Reverse_Engineering for field meanings.
 
 use crate::state::ControllerState;
-use crate::switch::report::{self, Report, REPORT_LENGTH};
+use crate::switch::report::{self, REPORT_LENGTH, Report};
 
 /// Locally-administered MAC in the IANA documentation range (from mzyy94).
 pub const MAC_ADDRESS: [u8; 6] = [0x00, 0x00, 0x5E, 0x00, 0x53, 0x5E];

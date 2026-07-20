@@ -49,7 +49,7 @@ impl InputSource for ManualInput {
                 // Disconnected == stdin closed (e.g. piped script ended):
                 // keep streaming the last state rather than erroring out.
                 Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => {
-                    return Ok(())
+                    return Ok(());
                 }
             }
         }

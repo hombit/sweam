@@ -9,8 +9,8 @@
 //! the independent-oracle test still needs a real hid-nintendo host.
 
 use crate::state::{ControllerState, StickState};
-use crate::switch::report::{unpack_stick, REPORT_LENGTH};
-use anyhow::{bail, Context};
+use crate::switch::report::{REPORT_LENGTH, unpack_stick};
+use anyhow::{Context, bail};
 use std::io::{Read, Write};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};

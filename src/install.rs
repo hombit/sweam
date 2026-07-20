@@ -12,7 +12,7 @@ pub use imp::{install, uninstall};
 
 #[cfg(target_os = "linux")]
 mod imp {
-    use anyhow::{bail, Context};
+    use anyhow::{Context, bail};
     use std::path::Path;
     use std::process::Command;
 
@@ -29,8 +29,9 @@ mod imp {
         // A config typo would otherwise surface only as a headless boot-time
         // crash loop at the Switch — validate before installing anything.
         if let Some(config) = config {
-            crate::steam::config::load(config)
-                .with_context(|| format!("Refusing to install a config that fails to load: {config}"))?;
+            crate::steam::config::load(config).with_context(|| {
+                format!("Refusing to install a config that fails to load: {config}")
+            })?;
         }
 
         std::fs::create_dir_all(prefix).with_context(|| format!("Failed to create {prefix}"))?;

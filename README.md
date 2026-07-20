@@ -31,7 +31,7 @@ forwarding are planned (phases 5–6).
 
 ## Build
 
-Rust 1.75+; on the SBC:
+Rust 1.85+ (edition 2024); on the SBC:
 
 ```sh
 cargo build --release        # binary at target/release/sweam

@@ -47,7 +47,7 @@
 use super::mapping::{self, LeftPadMode, Mapping, RightPadMode, StickTarget};
 use crate::state::Button;
 use crate::vdf;
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 
 pub fn load(path: &str) -> anyhow::Result<Mapping> {
     let text =

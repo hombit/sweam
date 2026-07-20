@@ -33,8 +33,8 @@ pub fn is_permission_error(err: &anyhow::Error) -> bool {
 
 #[cfg(target_os = "linux")]
 mod evdev_input {
-    use super::{mapping, ControllerState, InputSource};
-    use anyhow::{bail, Context};
+    use super::{ControllerState, InputSource, mapping};
+    use anyhow::{Context, bail};
 
     const STEAM_VENDOR_ID: u16 = 0x28DE;
 
