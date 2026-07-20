@@ -12,6 +12,7 @@ linker_messages = "allow"
 
 [dependencies]
 anyhow = "1"
+clap = { version = "4", features = ["derive"] }
 
 # Linux-only dependencies: the binary only ever runs on Linux (Radxa Zero 3E),
 # but `cargo check` should keep working on the macOS dev machine.

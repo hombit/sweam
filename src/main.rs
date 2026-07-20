@@ -29,14 +29,10 @@ fn load_mapping(config: Option<&str>) -> anyhow::Result<steam::mapping::Mapping>
     }
 }
 
+/// Parse argv; clap itself prints help/version/usage errors and exits.
 fn parse_command_line() -> cli::Command {
-    match cli::parse(std::env::args().skip(1)) {
-        Ok(command) => command,
-        Err(err) => {
-            eprintln!("sweam: {err}\nRun \"sweam help\" for usage.");
-            std::process::exit(2);
-        }
-    }
+    use clap::Parser;
+    cli::Cli::parse().command
 }
 
 #[cfg(target_os = "linux")]
@@ -55,25 +51,17 @@ fn main() -> anyhow::Result<()> {
     /// and the gadget is torn down on Drop instead of leaking in configfs.
     static RUNNING: AtomicBool = AtomicBool::new(true);
 
-    let (gadget_args, manual_mode) = match parse_command_line() {
-        cli::Command::Help => {
-            println!("{}", cli::HELP);
-            return Ok(());
-        }
-        cli::Command::Version => {
-            println!("sweam {}", env!("CARGO_PKG_VERSION"));
-            return Ok(());
-        }
+    let (input_args, gadget_args, manual_mode) = match parse_command_line() {
         cli::Command::Hostcheck { device } => return hostcheck::run(device.as_deref()),
         cli::Command::Install { config, prefix } => {
-            return install::install(config.as_deref(), prefix.as_deref());
+            return install::install(config.as_deref(), prefix.prefix.as_deref());
         }
-        cli::Command::Uninstall { prefix } => return install::uninstall(prefix.as_deref()),
-        cli::Command::Steamcheck { config, evdev } => {
-            return steamcheck::run(load_mapping(config.as_deref())?, evdev);
+        cli::Command::Uninstall { prefix } => return install::uninstall(prefix.prefix.as_deref()),
+        cli::Command::Steamcheck { input } => {
+            return steamcheck::run(load_mapping(input.config.as_deref())?, input.evdev);
         }
-        cli::Command::Steam(args) => (args, false),
-        cli::Command::Manual(args) => (args, true),
+        cli::Command::Steam { input, gadget } => (input, gadget, false),
+        cli::Command::Manual { gadget } => (cli::InputOpts::default(), gadget, true),
     };
 
     extern "C" fn stop(_signal: libc::c_int) {
@@ -137,13 +125,13 @@ fn main() -> anyhow::Result<()> {
     // after idle); keep the mapping around and (re)open it from the pump
     // loop, streaming neutral inputs whenever it is gone.
     let mapping = (!manual_mode)
-        .then(|| load_mapping(gadget_args.config.as_deref()))
+        .then(|| load_mapping(input_args.config.as_deref()))
         .transpose()?;
     let open_controller = || -> anyhow::Result<Option<Box<dyn steam::InputSource>>> {
         let Some(mapping) = mapping.clone() else {
             return Ok(None);
         };
-        match steam::EvdevSteamController::open(mapping, gadget_args.evdev.as_deref()) {
+        match steam::EvdevSteamController::open(mapping, input_args.evdev.as_deref()) {
             Ok(controller) => Ok(Some(Box::new(controller) as Box<dyn steam::InputSource>)),
             // Retrying can't fix permissions — fail the whole bridge.
             Err(err) if steam::is_permission_error(&err) => Err(err),
@@ -252,15 +240,9 @@ fn main() -> anyhow::Result<()> {
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
-    // Keep help working on the dev machine; everything else needs Linux.
-    match parse_command_line() {
-        cli::Command::Help => println!("{}", cli::HELP),
-        cli::Command::Version => println!("sweam {}", env!("CARGO_PKG_VERSION")),
-        _ => {
-            eprintln!(
-                "sweam only runs on Linux (USB gadget API); this build is for development checks."
-            );
-            std::process::exit(1);
-        }
-    }
+    // clap makes help/version work on the dev machine (it prints them and
+    // exits inside parse); every actual subcommand needs Linux.
+    let _ = parse_command_line();
+    eprintln!("sweam only runs on Linux (USB gadget API); this build is for development checks.");
+    std::process::exit(1);
 }
