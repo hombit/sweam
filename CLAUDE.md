@@ -63,5 +63,5 @@ Deploy: build on the device (`cargo build --release` on the Radxa/Pi), or cross-
 - dekuNukem/Nintendo_Switch_Reverse_Engineering — canonical: report formats (`bluetooth_hid_notes.md`), USB specifics (`USB-HID-Notes.md`), SPI calibration layout (`spi_flash_notes.md`).
 - mzyy94's Pro Controller USB gadget gist (descriptor + `simulate_procon.py` handshake/SPI responses): https://gist.github.com/mzyy94/60ae253a45e2759451789a117c59acf9
 - Linux `drivers/hid/hid-nintendo.c` — what a Linux host demands; our phase-2 test oracle.
-- Brikwerk/nxbt, mart1nro/joycontrol — Bluetooth emulators, useful for protocol code only (a clone of nxbt sits gitignored in `nxbt/`).
+- Brikwerk/nxbt (MIT), mart1nro/joycontrol (GPL — behavioral reference only) — Bluetooth emulators, useful for protocol details (e.g. the MCU state report format came from nxbt).
 - Steam Controller side: kernel `hid-steam` driver source; `steam-devices` package for udev rules.
