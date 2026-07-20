@@ -285,3 +285,135 @@ deadlock finding there.
    check (install.rs:95).
 6. Add install.rs + cli.rs to the CLAUDE.md architecture block; fix
    README's `sudo steamcheck` and add an install/service section.
+
+## Steam Controller IMU over hidraw (2026-07-20)
+
+### 1. Enabling IMU data (feature report 0x87, SET_SETTINGS_VALUES)
+
+The SC streams IMU samples only after being asked. All control traffic is one
+unnumbered 64-byte HID feature report: `type len payload...`, zero-padded.
+`0x87` = SET_SETTINGS_VALUES; payload is repeated triplets `reg u16le`:
+
+```
+87 <len=3*n> ( <reg> <val_lo> <val_hi> ){n}    ; pad to 64 with 0x00
+```
+
+Relevant setting registers (numeric ids from hid-steam.c, GPL, facts only):
+
+| reg  | name                       | values |
+|------|----------------------------|--------|
+| 0x07 | LEFT_TRACKPAD_MODE         | 7 = TRACKPAD_NONE (mouse emu off) |
+| 0x08 | RIGHT_TRACKPAD_MODE        | 7 = TRACKPAD_NONE |
+| 0x30 | IMU_MODE ("gyro mode")     | bitmask, below |
+| 0x31 | WIRELESS_PACKET_VERSION    | 2 (SDL and Steam set this first) |
+| 0x32 | SLEEP_INACTIVITY_TIMEOUT   | seconds (0x0384 = 900) |
+
+IMU_MODE bitmask: `0`=OFF, `1`=STEERING, `2`=TILT, `4`=SEND_ORIENTATION
+(quaternion), `8`=SEND_RAW_ACCEL, `16`=SEND_RAW_GYRO. SDL uses `0x18`
+(accel+gyro); sc-controller uses `0x14` (quat+gyro, no accel); `0x1C` = all
+three. Known-good full packet (ynsta/steamcontroller, MIT; gyro value patched
+to 0x1C at byte 18):
+
+```
+87 15  32 84 03  18 00 00  31 02 00  08 07 00  07 07 00  30 1C 00  2F 01 00
+      (0x32=900) (0x18=0)  (0x31=2)  (0x08=7)  (0x07=7)  (IMU=0x1C)(0x2F=1)
+```
+
+(0x18 = MOMENTUM_MAXIMUM_VELOCITY here per the id table; 0x2F=ENABLE_FAST_SCAN.)
+
+Per-controller addressing through the dongle: each of the 4 slots is its own
+USB HID interface (1-4) with its own hidraw node; send the feature report on
+that slot's node — no extra addressing byte. (ynsta, using libusb instead,
+sent SET_REPORT wValue=0x0300 wIndex=interface.) An empty slot NAKs SET_REPORT
+(EPIPE); hid-steam retries up to 50x with 20 ms sleeps — do the same.
+After 0x87 do a GET_REPORT: a lingering reply can otherwise be read back later.
+
+Lizard mode / hid-steam interaction (hid-steam.c facts):
+- lizard OFF = `0x81` (CLEAR_DIGITAL_MAPPINGS) + 0x87 setting trackpads to 7;
+  lizard ON = `0x85` (SET_DEFAULT_DIGITAL_MAPPINGS) + `0x8E`
+  (LOAD_DEFAULT_SETTINGS). 0x8E resets *all* settings — kills IMU_MODE too.
+- hid-steam (re)sends lizard config on: evdev open/close, wireless connect
+  event (type 0x03), hidraw-client close, and writes to the lizard_mode module
+  param. There is no suspend/resume hook, and no periodic resend.
+- **Gotcha: the hidraw node for the SC interface is hid-steam's virtual
+  "client" device.** open() on it sets client_opened → hid-steam *unregisters
+  the evdev input (and battery stays, sensors are Deck-only)* and stops all
+  its own configuration writes until close. So "buttons via hid-steam evdev +
+  IMU via hidraw" cannot coexist: while we hold hidraw open we own the device
+  completely and must parse buttons from the same raw packets (they're all in
+  the one input report anyway). On close, hid-steam restores lizard mode and
+  re-registers evdev.
+
+### 2. Input report layout (64 bytes, interrupt IN / hidraw read)
+
+Header: bytes 0-1 = report version `01 00`; byte 2 = type; byte 3 = payload
+len. Types: `0x01` input (60 B), `0x03` wireless event (1 B), `0x04` status/
+battery (11 B), (`0x09` = Steam Deck only). All fields little-endian.
+
+Type 0x01 payload (offsets in the 64-byte packet; per SDL controller_structs.h
+ValveControllerStatePacket_t, zlib, cross-checked vs ynsta MIT + hid-steam):
+
+| off | type | field |
+|-----|------|-------|
+| 4   | u32  | packet/sequence number |
+| 8-10| u24  | buttons (b8 bit7=A ... b10 bit4=rpad-click, part of a u64 field) |
+| 11  | u8   | left trigger 0-255 |
+| 12  | u8   | right trigger 0-255 |
+| 13-15| -   | pad |
+| 16  | s16  | lpad_x (joystick X when b10 bit3 clear) |
+| 18  | s16  | lpad_y |
+| 20  | s16  | rpad_x |
+| 22  | s16  | rpad_y |
+| 24  | u16  | trigger L 16-bit (wired only, "redundant") |
+| 26  | u16  | trigger R 16-bit |
+| 28  | s16  | accel X |
+| 30  | s16  | accel Y |
+| 32  | s16  | accel Z |
+| 34  | s16  | gyro X (pitch) |
+| 36  | s16  | gyro Y (roll) |
+| 38  | s16  | gyro Z (yaw) |
+| 40  | s16  | quat W |
+| 42  | s16  | quat X |
+| 44  | s16  | quat Y |
+| 46  | s16  | quat Z |
+| 48-63| -   | unused |
+
+Scales (SDL facts): gyro full scale ±2000 dps over ±32768 (≈16.4 LSB/dps,
+MPU-6500 style); accel ±2 g over ±32768 (16384 LSB/g); quat components are
+unit-normalized over ±32768. SDL FIXME comment hints accel may not arrive over
+the wireless dongle — verify on hardware; quat+gyro (0x14) is the known-good
+wireless combo (sc-controller shipped exactly that).
+
+Packet rate: query feature 0x83 GET_ATTRIBUTES_VALUES → attribute
+ATTRIB_CONNECTION_INTERVAL_IN_US (SDL defaults to 9000 µs ≈ 111 Hz when
+absent). Wireless idle: input packets stop; the slot sends periodic type 0x04
+status packets instead — u16 mV at offset 12, charge % at byte 14. Wireless
+events: type 0x03, byte 4 = 1 disconnected / 2 connected / 3 newly paired.
+Empty-slot interfaces simply produce no input packets.
+
+### 3. Sources / licenses
+
+- ynsta/steamcontroller (MIT) — packet struct, working 0x87 packet, endpoints.
+- SDL `src/joystick/hidapi/steam/` (zlib) — C structs with accel, IMU_MODE
+  constants, scales, attributes query. Best base for Rust translation.
+- hid-steam.c (GPL-2) and kozec/sc-controller (GPL-2), rodrigorc/steamctrl
+  (GPL-2): behavioral facts only (setting ids, lizard/client behavior, battery
+  offsets, retry quirk) — no code copied.
+
+### 4. Practical notes & plan
+
+- Finding the node: for each `/sys/class/hidraw/hidraw*/device`, the resolved
+  path contains `.../<bus>-<port>:1.<iface>/0003:28DE:1142.XXXX/hidraw/hidrawN`;
+  parse the `:1.<iface>` USB-interface segment (or read `../../bInterfaceNumber`).
+  Dongle iface 0 = keyboard emu, 1-4 = controller slots. Wired 28DE:1102:
+  iface 2 is the gamepad.
+- Plain `open(O_RDWR)` + `read()` works while hid-steam is bound (it forwards
+  every raw packet to the client node), but see the §1 gotcha: it disables the
+  evdev device. Feature reports: use HIDIOCSFEATURE/HIDIOCGFEATURE with a
+  leading report-id byte 0x00 + 64 bytes (SDL does `buf[0]=0`, 65 total).
+- Implementation order: (1) sysfs scan → hidraw open; (2) send 0x87 with
+  IMU_MODE=0x14, EPIPE-retry, readback; (3) parse type 0x01: buttons+pads+
+  triggers (drop evdev path while hidraw is open) and gyro/quat; (4) handle
+  0x03 connect (resend 0x87) and 0x04 idle; (5) try 0x18/0x1C on hardware to
+  see whether raw accel survives the dongle; fall back to deriving tilt from
+  the quaternion if not.

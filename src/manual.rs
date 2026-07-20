@@ -7,7 +7,7 @@
 //! `release a b`, `stick l 0.5 -1`, `neutral` and watch them arrive on the
 //! debug host with `evtest`.
 
-use crate::state::{Button, ControllerState, StickState};
+use crate::state::{Button, ControllerState, ImuSample, StickState};
 use crate::steam::InputSource;
 use std::sync::mpsc;
 
@@ -30,7 +30,8 @@ impl ManualInput {
             }
         });
         println!(
-            "Manual input: press|release <button…> | stick <l|r> <x> <y> (-1..1) | neutral\n\
+            "Manual input: press|release <button…> | stick <l|r> <x> <y> (-1..1) | \
+             gyro <x> <y> <z> (dps) | accel <x> <y> <z> (g) | neutral\n\
              Buttons: a b x y up down left right l r zl zr plus minus home capture lstick rstick"
         );
         Self { lines }
@@ -87,12 +88,44 @@ fn apply_line(state: &mut ControllerState, line: &str) -> Result<(), String> {
             *stick = StickState { x, y };
             Ok(())
         }
+        // IMU test inputs: a constant rate/acceleration held until changed
+        // (the sample ring is filled so all three report frames carry it).
+        "gyro" | "accel" => {
+            let mut values = [0f32; 3];
+            for value in &mut values {
+                *value = parse_float(words.next(), command)?;
+            }
+            let mut sample = state.imu[2];
+            if command == "gyro" {
+                sample.gyro = values.map(|dps| scale_imu(dps, ImuSample::GYRO_PER_DPS));
+            } else {
+                sample.accel = values.map(|g| scale_imu(g, ImuSample::ACCEL_PER_G));
+            }
+            state.imu = [sample; 3];
+            Ok(())
+        }
         "neutral" => {
             *state = ControllerState::default();
             Ok(())
         }
         other => Err(format!("unknown command {other:?}")),
     }
+}
+
+/// Physical units → clamped raw i16 IMU value.
+fn scale_imu(value: f32, per_unit: f32) -> i16 {
+    f32::clamp(value * per_unit, f32::from(i16::MIN), f32::from(i16::MAX)).round() as i16
+}
+
+fn parse_float(word: Option<&str>, command: &str) -> Result<f32, String> {
+    let word = word.ok_or_else(|| format!("{command}: expected three values"))?;
+    let value: f32 = word
+        .parse()
+        .map_err(|_| format!("{command}: bad value {word:?}"))?;
+    if !value.is_finite() {
+        return Err(format!("{command}: bad value {word:?}"));
+    }
+    Ok(value)
 }
 
 fn button_by_name(name: &str) -> Result<Button, String> {
@@ -191,6 +224,24 @@ mod tests {
         assert!(apply_line(&mut state, "flip").is_err());
         assert_eq!(state.buttons, 0);
         assert_eq!(state.left_stick, StickState::default());
+    }
+
+    #[test]
+    fn gyro_and_accel_fill_the_sample_ring() {
+        let mut state = ControllerState::default();
+        apply_line(&mut state, "gyro 100 -100 0").unwrap();
+        apply_line(&mut state, "accel 0 0 1").unwrap();
+        let expected = ImuSample {
+            accel: [0, 0, 4096],
+            gyro: [1640, -1640, 0],
+        };
+        assert_eq!(state.imu, [expected; 3]);
+        // Values clamp instead of wrapping.
+        apply_line(&mut state, "gyro 99999 0 0").unwrap();
+        assert_eq!(state.imu[2].gyro[0], i16::MAX);
+        // Errors: wrong arity and non-finite values.
+        assert!(apply_line(&mut state, "gyro 1 2").is_err());
+        assert!(apply_line(&mut state, "accel nan 0 0").is_err());
     }
 
     #[test]

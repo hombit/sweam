@@ -76,20 +76,30 @@ pub fn input_state_bytes(state: &ControllerState) -> [u8; 11] {
 /// `timer` is a free-running counter the real controller increments per
 /// report (wrapping); the Switch uses it to detect stalls.
 ///
-/// TODO(phase 6): fill IMU sample fields (bytes 13..49) — zeros mean
-/// "no motion", which is fine until then.
-pub fn standard_input_report(state: &ControllerState, timer: u8) -> Report {
+/// `with_imu`: fill bytes 13..49 with the state's three IMU sample frames
+/// (oldest first, matching the 0/+5/+10 ms spacing the report implies);
+/// when false they stay zero — what a real controller sends before the
+/// host enables the IMU (subcommand 0x40).
+pub fn standard_input_report(state: &ControllerState, timer: u8, with_imu: bool) -> Report {
     let mut report = [0u8; REPORT_LENGTH];
     report[0] = 0x30; // Report ID
     report[1] = timer;
     report[2..13].copy_from_slice(&input_state_bytes(state));
+    if with_imu {
+        for (frame, sample) in state.imu.iter().enumerate() {
+            let base = 13 + frame * 12;
+            for (i, value) in sample.accel.iter().chain(sample.gyro.iter()).enumerate() {
+                report[base + i * 2..base + i * 2 + 2].copy_from_slice(&value.to_le_bytes());
+            }
+        }
+    }
     report
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{Button, StickState};
+    use crate::state::{Button, ImuSample, StickState};
 
     #[test]
     fn stick_packing_round_trips() {
@@ -110,7 +120,7 @@ mod tests {
         state.set_button(Button::ZL, true); // left-buttons byte, bit 7
         state.left_stick = StickState { x: 0, y: 4095 };
 
-        let report = standard_input_report(&state, 42);
+        let report = standard_input_report(&state, 42, false);
         assert_eq!(report[0], 0x30);
         assert_eq!(report[1], 42);
         assert_eq!(report[3], 0x08, "A in right-buttons byte");
@@ -118,6 +128,35 @@ mod tests {
         assert_eq!(report[5], 0x80, "ZL in left-buttons byte");
         assert_eq!(unpack_stick(&report[6..9]), (0, 4095));
         assert_eq!(unpack_stick(&report[9..12]), (2048, 2048));
-        assert!(report[13..].iter().all(|&b| b == 0), "IMU zeroed for now");
+        assert!(report[13..].iter().all(|&b| b == 0), "IMU zeroed when off");
+    }
+
+    #[test]
+    fn imu_samples_packed_oldest_first() {
+        let mut state = ControllerState::default();
+        let sample = |n: i16| ImuSample {
+            accel: [n, -n, 100 * n],
+            gyro: [-100 * n, 1000 + n, i16::MIN],
+        };
+        state.imu = [sample(1), sample(2), sample(3)];
+
+        // Disabled: fields stay zero even with samples present.
+        let report = standard_input_report(&state, 0, false);
+        assert!(report[13..49].iter().all(|&b| b == 0));
+
+        // Enabled: three 12-byte frames, oldest sample (n=1) first,
+        // accel XYZ then gyro XYZ, i16 LE.
+        let report = standard_input_report(&state, 0, true);
+        for (frame, n) in [(0usize, 1i16), (1, 2), (2, 3)] {
+            let base = 13 + frame * 12;
+            let read =
+                |i: usize| i16::from_le_bytes([report[base + i * 2], report[base + i * 2 + 1]]);
+            assert_eq!(
+                [read(0), read(1), read(2), read(3), read(4), read(5)],
+                [n, -n, 100 * n, -100 * n, 1000 + n, i16::MIN],
+                "frame {frame}"
+            );
+        }
+        assert!(report[49..].iter().all(|&b| b == 0), "tail untouched");
     }
 }

@@ -82,13 +82,33 @@ impl Button {
     }
 }
 
+/// One 6-axis IMU sample in Pro Controller raw units: at the default ±8 g /
+/// ±2000 dps ranges, accel is ~4096 LSB per g and gyro ~16.4 LSB per dps
+/// (dekuNukem `imu_sensor_notes.md`: 0.000244 g/LSB, 0.06103 dps/LSB).
+/// The input side is responsible for converting into these units.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ImuSample {
+    pub accel: [i16; 3],
+    pub gyro: [i16; 3],
+}
+
+impl ImuSample {
+    /// Accel raw units per g at the ±8 g default range.
+    pub const ACCEL_PER_G: f32 = 4096.0;
+    /// Gyro raw units per degree/second at the ±2000 dps default range.
+    pub const GYRO_PER_DPS: f32 = 16.4;
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ControllerState {
     /// Bitmask indexed by [`Button`]; only the low 24 bits are used.
     pub buttons: u32,
     pub left_stick: StickState,
     pub right_stick: StickState,
-    // TODO(phase 6): IMU state (gyro/accel samples) for motion passthrough.
+    /// The last three IMU samples, oldest first — the 0x30 report carries
+    /// three 5 ms-spaced frames. Sources that sample slower than the report
+    /// rate can push one sample; the ring keeps the report plausible.
+    pub imu: [ImuSample; 3],
 }
 
 impl ControllerState {

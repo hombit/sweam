@@ -133,6 +133,9 @@ pub struct Protocol {
     /// Set once the host asked for the input stream (USB 0x04, or input
     /// report mode 0x30); before that we only answer requests.
     streaming: bool,
+    /// Whether the host enabled the IMU (subcommand 0x40 arg 1); until then
+    /// the 0x30 IMU sample fields stay zero, like a real controller.
+    imu_enabled: bool,
     /// Dedupe for the raw pre-streaming traffic log: the last report seen
     /// and how many times it repeated without being printed.
     last_raw: Vec<u8>,
@@ -192,7 +195,7 @@ impl Protocol {
 
     /// Next 0x30 standard input report for the current controller state.
     pub fn next_input_report(&mut self, state: &ControllerState) -> Report {
-        report::standard_input_report(state, self.next_timer())
+        report::standard_input_report(state, self.next_timer(), self.imu_enabled)
     }
 
     fn next_timer(&mut self) -> u8 {
@@ -288,11 +291,24 @@ impl Protocol {
                 payload[33] = 0xC8;
                 (0xA0, payload)
             }
+            // Enable/disable the IMU: gates whether 0x30 reports carry
+            // motion samples.
+            0x40 => {
+                self.imu_enabled = args.first().is_some_and(|&on| on != 0);
+                println!(
+                    "IMU {} by host",
+                    if self.imu_enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                );
+                (0x80, vec![])
+            }
             // Plain acks: low power (0x08), set MCU state (0x22), player
-            // lights (0x30), home light (0x38), IMU enable (0x40), vibration
-            // enable (0x48), and — to stay permissive — anything we don't
-            // know.
-            0x08 | 0x22 | 0x30 | 0x38 | 0x40 | 0x48 => (0x80, vec![]),
+            // lights (0x30), home light (0x38), vibration enable (0x48),
+            // and — to stay permissive — anything we don't know.
+            0x08 | 0x22 | 0x30 | 0x38 | 0x48 => (0x80, vec![]),
             _ => {
                 eprintln!("Generic ack for unhandled subcommand: {subcommand:#04X} {args:02X?}");
                 (0x80, vec![])
@@ -377,6 +393,25 @@ mod tests {
         let replies = handle(&mut p, &out(&[0x80, 0x05]));
         assert!(replies.is_empty());
         assert!(!p.streaming());
+    }
+
+    #[test]
+    fn imu_enable_gates_motion_samples() {
+        let mut p = Protocol::new();
+        let mut state = ControllerState::default();
+        state.imu[2] = crate::state::ImuSample {
+            accel: [1, 2, 3],
+            gyro: [4, 5, 6],
+        };
+
+        // Off by default: sample fields stay zero.
+        assert!(p.next_input_report(&state)[13..49].iter().all(|&b| b == 0));
+
+        // 0x40 arg 1 enables, arg 0 disables again.
+        handle(&mut p, &subcmd(0x40, &[0x01]));
+        assert!(p.next_input_report(&state)[13..49].iter().any(|&b| b != 0));
+        handle(&mut p, &subcmd(0x40, &[0x00]));
+        assert!(p.next_input_report(&state)[13..49].iter().all(|&b| b == 0));
     }
 
     #[test]

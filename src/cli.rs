@@ -17,6 +17,7 @@ const MANUAL_LONG_ABOUT: &str = "bridge with inputs typed on stdin (testing)
 
 Manual mode commands (typed on stdin):
   press <button…> | release <button…> | stick <l|r> <x> <y> | neutral
+  gyro <x> <y> <z> (deg/s) | accel <x> <y> <z> (g)
   buttons: a b x y up down left right l r zl zr plus minus home capture
            lstick rstick;  stick x/y in -1..1";
 
