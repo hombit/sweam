@@ -25,14 +25,16 @@ precisely so you can.
   therefore the host hung up" is unproven. With motion disabled the
   report *bytes* were byte-for-byte identical to the July build that played
   a full session, verified by diffing the report path.
-- **Cause**: the pump slept 8 ms and *then* did a blocking `write_all` to
-  `/dev/hidg0`, which waits for the host's next interrupt poll — another
-  ~8 ms. 8 + 8 = 16, sitting exactly on the failure threshold, so any extra
-  work per iteration tipped it over. Fixed in `8316911` by pacing against a
-  fixed deadline. **Not yet verified on hardware.**
-- This explains both regimes seen: the July build hovered at 16 ms and
-  dropped every ~30 s; today's builds do more per iteration and dropped
-  every few seconds. The 07-20 note claiming the MCU `0x21` disconnect was
+- **Cause of the half rate**: the pump slept 8 ms and *then* did a blocking
+  `write_all` to `/dev/hidg0`, which waits for the host's next interrupt
+  poll — another ~8 ms. 8 + 8 = 16. Fixed in `8316911` by pacing against a
+  fixed deadline. **Not yet verified on hardware**, and note that half rate
+  being *wrong* is established while half rate being the *cause of the
+  disconnects* is not (see the correction above).
+- Tempting story, still unproven: July's build hovered at 16 ms and dropped
+  every ~30 s, today's does more per iteration and dropped every few
+  seconds. It fits, but so would other explanations; the teardowns
+  themselves (`os error 108`) have never been traced to a cause. The 07-20 note claiming the MCU `0x21` disconnect was
   "verified fixed" was optimistic — what that fix stopped was the *bursts*
   of `0x21` retries, not the teardown.
 
