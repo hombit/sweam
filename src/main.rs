@@ -15,6 +15,7 @@ mod state;
 mod steam;
 mod steamcheck;
 mod switch;
+mod trace;
 mod vdf;
 
 /// The mapping from `--config`, or the built-in default layout.
@@ -61,8 +62,13 @@ fn main() -> anyhow::Result<()> {
 
     let (input_args, gadget_args, manual_mode) = match command {
         cli::Command::Hostcheck { device } => return hostcheck::run(device.as_deref()),
-        cli::Command::Install { config, prefix } => {
-            return install::install(config.as_deref(), prefix.prefix.as_deref());
+        cli::Command::Trace { action } => return trace::run(action),
+        cli::Command::Install {
+            config,
+            prefix,
+            trace,
+        } => {
+            return install::install(config.as_deref(), prefix.prefix.as_deref(), trace);
         }
         cli::Command::Uninstall { prefix } => return install::uninstall(prefix.prefix.as_deref()),
         cli::Command::Steamcheck { input } => {

@@ -4,6 +4,17 @@
 
 use clap::{Args, Parser, Subcommand};
 
+const TRACE_LONG_ABOUT: &str = "Record the gadget-side USB conversation.
+
+sweam's log shows what the host asked for, never what happened on the wire.
+usbmon cannot help: it captures on a USB host controller, and this board is
+the peripheral. This uses the UDC driver's ftrace tracepoints instead — bus
+events (reset/suspend/disconnect), control requests, endpoint commands.
+
+Recording is a ring buffer, so nothing has to be caught live. `sweam install
+--trace` runs `snapshot` whenever the service stops, leaving every
+disconnect's trace in the journal with nobody at the keyboard.";
+
 const LONG_ABOUT: &str = "Steam Controller → Switch Pro Controller USB bridge.
 
 Everything is auto-detected where possible; every detected value can be \
@@ -57,6 +68,12 @@ pub enum Command {
         #[command(flatten)]
         gadget: GadgetOpts,
     },
+    /// record the gadget-side USB conversation (dwc3 tracepoints)
+    #[command(long_about = TRACE_LONG_ABOUT)]
+    Trace {
+        #[arg(value_enum)]
+        action: TraceAction,
+    },
     /// print parsed Steam Controller inputs
     Steamcheck {
         #[command(flatten)]
@@ -77,12 +94,30 @@ pub enum Command {
         config: Option<String>,
         #[command(flatten)]
         prefix: PrefixOpt,
+        /// also record the USB conversation: the service starts tracing at
+        /// boot and dumps the events preceding every disconnect into the
+        /// journal, so a session at the Switch needs no one at the keyboard
+        #[arg(long)]
+        trace: bool,
     },
     /// stop the service and remove /opt/sweam
     Uninstall {
         #[command(flatten)]
         prefix: PrefixOpt,
     },
+}
+
+/// What `sweam trace` should do to the recording.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum TraceAction {
+    /// begin recording into a ring buffer
+    Start,
+    /// print recent events, then clear the buffer
+    Snapshot,
+    /// print the whole buffer, leaving it in place
+    Dump,
+    /// stop recording
+    Stop,
 }
 
 /// Controller-input options shared by `steam` and `steamcheck`.
@@ -220,13 +255,15 @@ mod tests {
                 prefix: PrefixOpt {
                     prefix: Some("/usr/local/lib/sweam".into()),
                 },
+                trace: false,
             }
         );
         assert_eq!(
-            parse_str("install").unwrap(),
+            parse_str("install --trace").unwrap(),
             Command::Install {
                 config: None,
                 prefix: PrefixOpt::default(),
+                trace: true,
             }
         );
         assert_eq!(

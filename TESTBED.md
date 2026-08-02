@@ -95,30 +95,31 @@ Steam Controller button presses decoded on the Pi by `hostcheck`.
 
 `usbmon` is no help here: it captures on a USB *host* controller, and the
 Radxa is the peripheral — the host is the Switch, which we cannot
-instrument. The gadget side records through the dwc3 driver's own ftrace
-tracepoints instead, which show bus events (reset/disconnect/suspend),
-every control request, and endpoint commands.
+instrument. `sweam trace` uses the dwc3 driver's own ftrace tracepoints
+instead: bus events (reset/disconnect/suspend), control requests, endpoint
+commands.
 
-`tools/sweam-trace` wraps the debugfs pokes. Copy it over once:
-
-```sh
-scp tools/sweam-trace radxa@192.168.1.44:
-ssh radxa@192.168.1.44 'sudo install -m755 sweam-trace /usr/local/bin/'
-```
-
-Then, around a Switch session:
+The board lives plugged into a Switch, where nobody can type, so install
+the service with tracing wired in:
 
 ```sh
-sudo sweam-trace start   # 16 MB ring buffer; survives sweam restarts
-# …play until it misbehaves…
-sudo sweam-trace dump    # the events still in the ring, i.e. the most recent
-sudo sweam-trace stop
+sudo /opt/sweam/sweam install --config configs/touch-dpad.vdf --trace
 ```
 
-It is a ring buffer, so there is nothing to catch live — after a disconnect
-it still holds the events leading up to it. Pair it with the
-`Report pump stalled for N ms` lines sweam logs when its own report stream
-gaps: together they separate "the host hung up on us" from "we went quiet".
+That adds `ExecStartPre=sweam trace start` and `ExecStopPost=sweam trace
+snapshot` to the unit, so recording begins at boot and **every disconnect
+dumps the events that preceded it into the journal** — sweam exits on a host
+teardown, which is exactly when the snapshot fires. Afterwards:
+
+```sh
+sudo journalctl -u sweam | grep -A400 "last USB events before exit"
+```
+
+By hand, if you are at the bench: `sudo sweam trace start|snapshot|dump|stop`.
+
+Pair it with the `Report pump stalled for N ms` lines sweam logs when its own
+report stream gaps: together they separate "the host hung up on us" from
+"we went quiet".
 
 ## Caveats
 

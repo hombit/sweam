@@ -31,7 +31,7 @@ mod imp {
     /// Created by systemd at boot; the sd_booted(3) init-detection probe.
     const SYSTEMD_RUN_DIR: &str = "/run/systemd/system";
 
-    pub fn install(config: Option<&str>, prefix: Option<&str>) -> anyhow::Result<()> {
+    pub fn install(config: Option<&str>, prefix: Option<&str>, trace: bool) -> anyhow::Result<()> {
         ensure_root()?;
         // Check before touching anything: otherwise the files land and the
         // first systemctl call fails, leaving debris and a confusing error.
@@ -74,6 +74,19 @@ mod imp {
             None => format!("\"{binary_path}\" steam"),
         };
 
+        // With --trace the service records the USB conversation for itself:
+        // tracing starts before the bridge and every exit (i.e. every
+        // disconnect) dumps the preceding events into the journal. The board
+        // spends its life plugged into a Switch, where nobody can type.
+        let trace_lines = if trace {
+            format!(
+                "ExecStartPre=-{q}{binary_path}{q} trace start\n\
+                 ExecStopPost=-{q}{binary_path}{q} trace snapshot\n",
+                q = '"'
+            )
+        } else {
+            String::new()
+        };
         let unit = format!(
             "\
 [Unit]
@@ -81,7 +94,7 @@ Description=Steam Controller to Switch Pro Controller USB bridge
 
 [Service]
 ExecStart={exec_start}
-Restart=always
+{trace_lines}Restart=always
 RestartSec=2
 
 [Install]
