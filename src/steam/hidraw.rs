@@ -210,7 +210,7 @@ impl HidrawSteamController {
                                 }
                             }
                         }
-                        push_imu(state, input.imu_sample());
+                        push_imu(state, self.mapping.remap_imu(input.imu_sample()));
                     }
                     Some(packet::Packet::Connect(event)) => match event {
                         // The slot keeps its node when the controller sleeps

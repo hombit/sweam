@@ -46,7 +46,10 @@
 //! how the controller is read: the IMU exists only in the raw HID packets,
 //! so a layout with a gyro group selects the hidraw input source (which
 //! needs root and takes the device over from `hid-steam`). `settings
-//! { "enabled" "0" }` parks the group without deleting it.
+//! { "enabled" "0" }` parks the group without deleting it; `"axes"
+//! "-z,x,y"` re-frames the controller's IMU axes onto the Switch's (`-`
+//! inverts, applies to gyro and accel alike); `"gyro_scale" "N"` trims the
+//! rotation rates.
 //!
 //! A config is a *complete* layout: it starts from an empty mapping, and
 //! anything it doesn't bind stays unbound. Unknown sources and binding keys
@@ -141,6 +144,8 @@ fn apply_group(mapping: &mut Mapping, group: &vdf::Block) -> anyhow::Result<()> 
         // and it makes the layout need an input source that can see the IMU.
         "gyro" => {
             mapping.gyro = gyro_enabled(group).with_context(|| format!("group {source:?}"))?;
+            mapping.imu_axes = imu_axes(group).with_context(|| format!("group {source:?}"))?;
+            mapping.gyro_scale = gyro_scale(group).with_context(|| format!("group {source:?}"))?;
             &[]
         }
         other => {
@@ -236,6 +241,54 @@ fn gyro_enabled(group: &vdf::Block) -> anyhow::Result<bool> {
     }
 }
 
+/// `settings { "axes" "x,y,z" }` on the gyro group: which controller axis
+/// feeds each Pro Controller axis, `-` to invert. `"x,y,z"` (the default)
+/// passes them through; `"-z,x,y"` sends the controller's negated Z as the
+/// Switch's X, and so on. Applies to gyro and accelerometer alike, since
+/// they share a body frame.
+fn imu_axes(group: &vdf::Block) -> anyhow::Result<[(usize, bool); 3]> {
+    let Some(text) = group
+        .get_block("settings")
+        .and_then(|settings| settings.get_str("axes"))
+    else {
+        return Ok(mapping::IMU_AXES_IDENTITY);
+    };
+    let fields: Vec<&str> = text.split(',').map(str::trim).collect();
+    if fields.len() != 3 {
+        bail!("bad axes {text:?} (expected three comma-separated axes, e.g. \"x,y,z\")");
+    }
+    let mut axes = mapping::IMU_AXES_IDENTITY;
+    for (out, field) in axes.iter_mut().zip(fields) {
+        let (negate, name) = match field.strip_prefix('-') {
+            Some(rest) => (true, rest),
+            None => (false, field.strip_prefix('+').unwrap_or(field)),
+        };
+        let source = match name.trim().to_ascii_lowercase().as_str() {
+            "x" => 0,
+            "y" => 1,
+            "z" => 2,
+            other => bail!("bad axis {other:?} in axes {text:?} (x|y|z, optionally with -)"),
+        };
+        *out = (source, negate);
+    }
+    Ok(axes)
+}
+
+/// `settings { "gyro_scale" "N" }` on the gyro group: extra gain on the
+/// rotation rates, for when the Switch's felt sensitivity is off. Positive.
+fn gyro_scale(group: &vdf::Block) -> anyhow::Result<f32> {
+    let Some(text) = group
+        .get_block("settings")
+        .and_then(|settings| settings.get_str("gyro_scale"))
+    else {
+        return Ok(1.0);
+    };
+    match text.parse::<f32>() {
+        Ok(value) if value.is_finite() && value > 0.0 => Ok(value),
+        _ => bail!("bad gyro_scale {text:?} (expected a positive number)"),
+    }
+}
+
 /// `settings { "sensitivity" "N" }` on the right-pad group: camera-mode
 /// gain — stick deflection gained per unit of finger travel (both in evdev
 /// units), default 4. Must be a positive number.
@@ -299,6 +352,7 @@ mod tests {
     const TOUCH_DPAD: &str = include_str!("../../configs/touch-dpad.vdf");
     const ABSOLUTE: &str = include_str!("../../configs/absolute-rightpad.vdf");
     const NO_GYRO: &str = include_str!("../../configs/no-gyro.vdf");
+    const GYRO_ONLY: &str = r#""controller_mappings" { "group" { "source" "gyro" } }"#;
 
     #[test]
     fn default_config_matches_builtin_mapping() {
@@ -388,6 +442,37 @@ mod tests {
         // The built-in layout (no --config) stays on the evdev source.
         assert!(!Mapping::default().gyro);
         assert!(!parse(NO_GYRO).unwrap().gyro);
+    }
+
+    #[test]
+    fn gyro_axes_and_scale_are_configurable() {
+        let mapping = parse(
+            r#""controller_mappings" { "group" {
+                "source" "gyro"
+                "settings" { "axes" "-z, x, y"   "gyro_scale" "1.5" }
+            } }"#,
+        )
+        .unwrap();
+        assert_eq!(mapping.imu_axes, [(2, true), (0, false), (1, false)]);
+        assert_eq!(mapping.gyro_scale, 1.5);
+        // Identity unless asked.
+        assert_eq!(
+            parse(GYRO_ONLY).unwrap().imu_axes,
+            mapping::IMU_AXES_IDENTITY
+        );
+    }
+
+    #[test]
+    fn bad_gyro_axes_are_rejected() {
+        for bad in ["x,y", "x,y,w", "x,y,z,z", ""] {
+            let text = format!(
+                r#""controller_mappings" {{ "group" {{
+                    "source" "gyro"
+                    "settings" {{ "axes" "{bad}" }}
+                }} }}"#
+            );
+            assert!(parse(&text).is_err(), "{bad:?} should be rejected");
+        }
     }
 
     #[test]

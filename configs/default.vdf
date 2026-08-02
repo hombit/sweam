@@ -19,6 +19,17 @@
 	"group"
 	{
 		"source"	"gyro"
+		"settings"
+		{
+			// Which controller IMU axis feeds each Switch axis; "-"
+			// inverts. Identity ("x,y,z") is the default and is very
+			// likely NOT right — the two devices do not share a body
+			// frame. Edit, then: sudo systemctl restart sweam
+			// "axes"	"x,y,z"
+			// Extra gain on the rotation rates, if aiming feels too
+			// slow or too twitchy. Positive number, default 1.
+			// "gyro_scale"	"1"
+		}
 	}
 
 	"group"

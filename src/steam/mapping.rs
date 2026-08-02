@@ -76,10 +76,16 @@ const SECTOR_TAN_NUM: i64 = 27146;
 const SECTOR_TAN_DEN: i64 = 65536;
 
 /// Default camera-mode sensitivity: virtual stick deflection gained per unit
-/// of finger travel (both in evdev units). At 4.0 a slow, steady swipe of
-/// ~1/6 pad width per tick pins the stick; see [`CAMERA_DECAY`] for how
+/// of finger travel (both in evdev units). See [`CAMERA_DECAY`] for how
 /// velocity turns into a sustained deflection.
-pub(crate) const CAMERA_SENSITIVITY_DEFAULT: f32 = 4.0;
+///
+/// Raised from 4.0 to 12.0 after the first Switch session (2026-08-02):
+/// 4.0 was far too slow to aim with. The theoretical settling point assumed
+/// one position sample per tick, but the controller sends ~111 packets/s
+/// against a 125 Hz pump, so a tick often decays without any new motion to
+/// add — the effective gain is well under the arithmetic. Tune per config
+/// with `settings { "sensitivity" "N" }`.
+pub(crate) const CAMERA_SENSITIVITY_DEFAULT: f32 = 12.0;
 
 /// Fraction of the camera deflection kept per [`Mapping::tick`] (~8 ms), an
 /// exponential decay with time constant ~49 ms (-8 ms / ln 0.85): the stick
@@ -90,6 +96,9 @@ const CAMERA_DECAY: f32 = 0.85;
 /// Decayed deflection below this snaps straight to 0 (well inside host-side
 /// stick deadzones) so the exponential tail doesn't linger forever.
 const CAMERA_STOP: f32 = 64.0;
+
+/// Pass the controller's IMU axes through unchanged.
+pub(crate) const IMU_AXES_IDENTITY: [(usize, bool); 3] = [(0, false), (1, false), (2, false)];
 
 /// Which Switch stick a physical analog input drives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,6 +152,18 @@ pub struct Mapping {
     /// only exists in the raw HID packets, so a layout that asks for motion
     /// can only be served by the hidraw source (see `steam::hidraw`).
     pub gyro: bool,
+    /// How the controller's IMU axes map onto the Pro Controller's, as
+    /// `(source axis, negate)` per output axis. Identity by default.
+    ///
+    /// The two devices do not share a body frame, and the mapping between
+    /// them is a hardware question, so it is configurable rather than baked
+    /// in: `settings { "axes" "-z,x,y" }` on the gyro group.
+    pub imu_axes: [(usize, bool); 3],
+    /// Extra gain on gyro rates, on top of the unit conversion. The Switch
+    /// integrates three IMU frames per report assuming 5 ms spacing, which
+    /// this controller cannot match (it samples at ~111 Hz), so the felt
+    /// speed may need trimming.
+    pub gyro_scale: f32,
     /// Last seen left-pad touch position (`ABS_HAT0X/Y`), tracked so a
     /// single-axis event can re-sectorize with both coordinates. Runtime
     /// state, only meaningful in [`LeftPadMode::TouchDpad`].
@@ -170,6 +191,8 @@ impl Mapping {
             right_pad_mode: RightPadMode::AbsoluteStick,
             camera_sensitivity: CAMERA_SENSITIVITY_DEFAULT,
             gyro: false,
+            imu_axes: IMU_AXES_IDENTITY,
+            gyro_scale: 1.0,
             left_pad_touch: (0, 0),
             right_pad_touched: false,
             right_pad_prev: (None, None),
@@ -282,6 +305,20 @@ impl Mapping {
         } else {
             stick.y = scale_y(value);
         }
+    }
+
+    /// Re-frame one IMU sample into the Pro Controller's axes and apply the
+    /// gyro gain. Accel is remapped the same way (same physical frame) but
+    /// never scaled — it carries gravity, whose magnitude must stay 1 g.
+    pub fn remap_imu(&self, sample: crate::state::ImuSample) -> crate::state::ImuSample {
+        let mut out = crate::state::ImuSample::default();
+        for (axis, &(source, negate)) in self.imu_axes.iter().enumerate() {
+            let sign = if negate { -1 } else { 1 };
+            out.accel[axis] = sample.accel[source].saturating_mul(sign);
+            let scaled = sample.gyro[source] as f32 * self.gyro_scale * sign as f32;
+            out.gyro[axis] = scaled.round().clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+        }
+        out
     }
 
     /// Advance time-based behavior by one pump iteration (~8 ms): in
