@@ -224,9 +224,19 @@ fn main() -> anyhow::Result<()> {
     // Input report pump.
     println!("Waiting for the host handshake…");
     let mut last_retry = std::time::Instant::now();
+    // A stalled pump looks to the host exactly like a dead controller —
+    // hid-nintendo accepts report gaps of 8–17 ms and the Switch is no more
+    // patient — so measure the gap and say so. Without this, a stall and a
+    // protocol rejection are indistinguishable in the journal, which is what
+    // made the disconnect hunt so slow.
+    let mut last_report = std::time::Instant::now();
+    let mut worst_gap = Duration::ZERO;
     while RUNNING.load(Ordering::SeqCst) {
         std::thread::sleep(REPORT_INTERVAL);
-        // Hotplug: while no controller is open, retry once a second.
+        // Hotplug: while no controller is open, retry once a second. This
+        // runs *in the pump*, so anything slow inside open_controller()
+        // stalls the report stream (the hidraw probe sleeps between its
+        // settings-report retries — up to 60 ms per slot).
         if input.is_none() && !manual_mode && last_retry.elapsed() >= Duration::from_secs(1) {
             input = open_controller()?;
             last_retry = std::time::Instant::now();
@@ -251,6 +261,18 @@ fn main() -> anyhow::Result<()> {
             }
             protocol.next_input_report(&state)
         };
+        // Report the gap since the previous report, but only when it is bad
+        // enough to matter and worse than anything reported so far — a stall
+        // storm must not itself become a logging storm.
+        let gap = last_report.elapsed();
+        if gap > Duration::from_millis(17) && gap > worst_gap {
+            worst_gap = gap;
+            eprintln!(
+                "Report pump stalled for {} ms (host tolerates ~17)",
+                gap.as_millis()
+            );
+        }
+        last_report = std::time::Instant::now();
         if let Err(err) = lock(&writer).write_all(&report) {
             // The host cutting the connection (unplug, Switch sleeping) is
             // expected operation, not a failure: exit cleanly so the journal
