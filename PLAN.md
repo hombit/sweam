@@ -12,11 +12,17 @@ precisely so you can.
 
 ### What the hardware actually says
 
-- **The Switch tears the port down because our report stream is late, not
-  because it is wrong.** Gadget trace, 2026-08-02: intervals between our
-  outgoing reports were median **16.0 ms**, p90 17.0, max 17.1 — and
-  hid-nintendo (`main.rs`, `REPORT_INTERVAL`) documents the accepted window
-  as 8–17 ms. 5% of reports were already past it. With motion disabled the
+- **Our report stream ran at half rate.** Gadget trace, 2026-08-02:
+  intervals between our outgoing reports were median **16.0 ms**, p90 17.0,
+  max 17.1, where a real Pro Controller streams at 8 ms.
+  **Correction, same day:** do *not* read "8–17 ms" as a disconnect
+  threshold — I did, and it is wrong. Those are hid-nintendo's
+  `JC_INPUT_REPORT_MIN_DELTA`/`MAX_DELTA`, and their only use in
+  `joycon_parse_report()` is to count `consecutive_valid_report_deltas`,
+  which gates *when the driver may send subcommands*. Out-of-range deltas
+  reset that counter; nothing disconnects, resets or warns. So bad timing
+  plausibly stalls the subcommand handshake, but "we exceeded 17 ms
+  therefore the host hung up" is unproven. With motion disabled the
   report *bytes* were byte-for-byte identical to the July build that played
   a full session, verified by diffing the report path.
 - **Cause**: the pump slept 8 ms and *then* did a blocking `write_all` to
@@ -39,11 +45,20 @@ precisely so you can.
       not our loop: check the interrupt endpoint's `bInterval` (f_hid picks
       it; configfs does not expose it) against a real Pro Controller's. Then
       the fix is the descriptor, not the pump.
-- [ ] **Stop holding locks across blocking I/O.** The pump holds the
-      `writer` mutex through a blocking write while the reader thread needs
-      the same mutex to answer subcommands, so a slow poll delays replies.
-      This is the real structural flaw, and it is fixable with the threads
-      we have.
+- [ ] **Drop the threads: one `poll()` loop over `/dev/hidg0`.** The two
+      threads exist only because reading the fd blocks; everything since —
+      three mutexes, a lock order, a reply queue (`b34de32`) — is scaffolding
+      holding that decision up, and it produced a measured 80 ms starvation
+      when the reader's blocking writes held the writer mutex through the
+      host's poll. A single loop with an 8 ms timeout services reads when
+      readable and writes on the deadline: no locks, no queue, starvation
+      impossible. Do this before adding anything else to the pump.
+      Note when doing it: `b34de32` made replies displace `0x30` reports on
+      the theory that a `0x21` carries input state and a real controller
+      sends one *instead of* the other. **That theory is unsupported** —
+      hid-nintendo takes button/stick state from `0x30` and treats `0x21`
+      as a synchronous reply — so the single loop should send both, just
+      without either blocking the other.
 - [ ] **Get logging out of the hot path.** The reader thread `println!`s per
       subcommand into journald, which can block its writer under load — and
       a blocked reader thread holds the protocol lock. More plausible as a
