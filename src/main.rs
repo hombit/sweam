@@ -216,16 +216,21 @@ fn main() -> anyhow::Result<()> {
         }
         let report = {
             let mut protocol = lock(&protocol);
-            if !protocol.streaming() {
-                continue;
-            }
             let mut state = lock(&state);
+            // Poll even when the host isn't streaming yet. Skipping it would
+            // leave packets queueing in the kernel buffers, so a session
+            // would open by replaying a backlog of stale input (a stale
+            // camera deflection among it), and wireless connect/disconnect
+            // events would arrive late or not at all.
             if let Some(controller) = input.as_mut()
                 && let Err(err) = controller.poll(&mut state)
             {
                 eprintln!("Controller lost, streaming neutral inputs: {err:#}");
                 input = None;
                 *state = state::ControllerState::default();
+            }
+            if !protocol.streaming() {
+                continue;
             }
             protocol.next_input_report(&state)
         };

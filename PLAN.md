@@ -258,6 +258,15 @@ Implement `src/switch/protocol.rs` (see its doc comments and TODOs):
          `BTN_THUMB2` as a touch transition and reset the tracked position.
          evdev only sends transitions; raw HID repeats the bit every packet,
          so the delta was never computed. Fixed + regression test.
+- [x] Bridge-level verification (2026-08-02): `sweam steam` runs the hidraw
+      source alongside the gadget (bound, /dev/hidg0, Switch enumerates it),
+      and a controller power-cycle mid-run gives the full
+      `streaming → disconnected (neutral) → connected (motion re-enabled) →
+      streaming` cycle. Also fixed here: the pump used to `continue` before
+      polling the controller whenever the host wasn't streaming, so packets
+      queued in the kernel buffers and a session would open by replaying a
+      stale backlog (and connect/disconnect events were missed entirely).
+      Deployed as the active service config: touch-dpad.vdf + gyro group.
 - [ ] Remaining: IMU axis order/signs are passed through unchanged and need
       tuning against a real Switch (motion game or the gyro calibration
       screen); consider exposing `imu_mode` in the gyro group's settings.

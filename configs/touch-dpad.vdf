@@ -6,6 +6,13 @@
 // Run with:  sweam steam --config configs/touch-dpad.vdf
 "controller_mappings"
 {
+	// Motion forwarding, as in configs/default.vdf: makes sweam read the
+	// controller over raw HID (needs root) so the IMU is available.
+	"group"
+	{
+		"source"	"gyro"
+	}
+
 	"version"		"1"
 	"title"			"Touch d-pad"
 	"description"	"Like the default layout, but the left pad acts as a d-pad on touch instead of click: brushing the pad presses directions, clicking adds nothing."

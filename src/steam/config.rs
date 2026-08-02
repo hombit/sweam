@@ -332,6 +332,8 @@ mod tests {
     fn touch_dpad_config_selects_touch_mode() {
         let mapping = parse(TOUCH_DPAD).unwrap();
         assert_eq!(mapping.left_pad, LeftPadMode::TouchDpad);
+        // It tracks the default layout, motion included.
+        assert!(mapping.gyro);
         // The direction bindings still apply.
         assert_eq!(mapping.button(BTN_DPAD_UP), Some(Button::Up));
         // Everything else stays as in the default layout.
