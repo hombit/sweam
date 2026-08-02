@@ -21,11 +21,19 @@
 		"source"	"gyro"
 		"settings"
 		{
-			// Which controller IMU axis feeds each Switch axis; "-"
-			// inverts. Identity ("x,y,z") is the default and is very
-			// likely NOT right — the two devices do not share a body
-			// frame. Edit, then: sudo systemctl restart sweam
-			// "axes"	"x,y,z"
+			// Re-frame the controller's IMU onto the Switch's axes.
+			// hid-nintendo documents the Switch frame as "X: positive
+			// toward the triggers; Y: positive to the left; Z: positive
+			// up". Our own bench data puts the Steam Controller's +Z up
+			// too (flat at rest it reads +0.98 g on Z), and hid-steam
+			// labels its X pitch / Y roll, so the controller is
+			// X=left-right, Y=forward, Z=up. Hence: Switch X (forward)
+			// takes the controller's Y, Switch Y (left) takes its
+			// negated X, Z passes through — which is also why yaw half
+			// worked before while pitch went to the Switch's roll axis
+			// and was ignored. Sign variants if aim inverts: "y,x,z"
+			// (pitch flipped), "-y,-x,z" (roll flipped).
+			"axes"	"y,-x,z"
 			// Extra gain on the rotation rates, if aiming feels too
 			// slow or too twitchy. Positive number, default 1.
 			// "gyro_scale"	"1"
