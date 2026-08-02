@@ -126,6 +126,15 @@ fn main() -> anyhow::Result<()> {
                         }
                     );
                     last = state;
+                    // Dump the USB trace here, while it still describes the
+                    // transition. Waiting for ExecStopPost no longer works:
+                    // sweam now survives the host's reset instead of
+                    // exiting, so the service never stops, and the board is
+                    // power-cycled between the Switch and the bench, which
+                    // wipes the ring buffer. The journal is the only thing
+                    // that survives both. Errors are ignored — tracing is
+                    // optional and must never disturb the bridge.
+                    let _ = trace::run(cli::TraceAction::Snapshot);
                 }
                 std::thread::sleep(Duration::from_millis(200));
             }
