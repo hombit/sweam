@@ -158,6 +158,12 @@ pub struct GadgetOpts {
     /// they are built into your kernel or already loaded
     #[arg(long)]
     pub skip_modprobe: bool,
+    /// current to request from the host, in mA (default 500, i.e. 0.5 A —
+    /// what a real Pro Controller draws to charge). Use 0 when the board is
+    /// powered independently, so the host is not asked for current it does
+    /// not need to budget
+    #[arg(long, value_name = "MA")]
+    pub max_power: Option<u32>,
 }
 
 /// `--prefix`, shared by `install` and `uninstall`.
@@ -190,8 +196,8 @@ mod tests {
                 },
                 gadget: GadgetOpts {
                     udc: Some("fcc00000.usb".into()),
-                    configfs: None,
                     skip_modprobe: true,
+                    ..GadgetOpts::default()
                 },
             }
         );
@@ -204,6 +210,20 @@ mod tests {
                 },
             }
         );
+    }
+
+    #[test]
+    fn max_power_is_overridable() {
+        let Command::Steam { gadget, .. } = parse_str("steam --max-power 0").unwrap() else {
+            panic!("expected steam");
+        };
+        assert_eq!(gadget.max_power, Some(0));
+        // Absent means the default (a real Pro Controller's 500 mA), which
+        // the gadget layer applies — not None meaning "declare nothing".
+        let Command::Steam { gadget, .. } = parse_str("steam").unwrap() else {
+            panic!("expected steam");
+        };
+        assert_eq!(gadget.max_power, None);
     }
 
     #[test]
@@ -225,7 +245,7 @@ mod tests {
                 gadget: GadgetOpts {
                     udc: Some("fcc00000.usb".into()),
                     configfs: Some("/mnt/cfg".into()),
-                    skip_modprobe: false,
+                    ..GadgetOpts::default()
                 },
             }
         );

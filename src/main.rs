@@ -99,6 +99,7 @@ fn main() -> anyhow::Result<()> {
         udc: gadget_args.udc,
         configfs_root: gadget_args.configfs.map(Into::into),
         skip_modprobe: gadget_args.skip_modprobe,
+        max_power: gadget_args.max_power,
     })
     .context("Failed to set up the Pro Controller USB gadget")?;
     let hidg_path = gadget.hidg_device()?;

@@ -114,6 +114,7 @@ every detected value can be overridden:
 | `--udc NAME` | several UDCs in `/sys/class/udc` (default: first, with a warning) |
 | `--configfs PATH` | configfs the detection can't see (default: per `/proc/mounts`) |
 | `--skip-modprobe` | `libcomposite`/`usb_f_hid` are builtin, or no `modprobe` binary |
+| `--max-power MA` | current to request from the host (default 500 mA, what a real Pro Controller draws to charge); use `0` when the board has its own supply |
 | `--evdev PATH` | force a specific `/dev/input/eventN` as the controller |
 | `--hidraw` | read raw HID packets instead of evdev — see "Motion" below |
 | `--hidraw-device PATH` | force a specific `/dev/hidrawN` as the controller (implies `--hidraw`) |

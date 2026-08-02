@@ -18,6 +18,10 @@ pub const PRO_CONTROLLER_PID: u16 = 0x2009;
 const GADGET_NAME: &str = "sweam_procon";
 const DEFAULT_CONFIGFS_ROOT: &str = "/sys/kernel/config/usb_gadget";
 
+/// What a real Pro Controller asks for: it charges over this port. Boards
+/// powered independently of the host should ask for 0 instead.
+pub const DEFAULT_MAX_POWER_MA: u32 = 500;
+
 /// Environment-specific knobs, exposed on the command line so sweam is not
 /// tied to one SBC or distro (defaults match the Radxa Zero 3E / Debian).
 #[derive(Debug, Default)]
@@ -28,6 +32,8 @@ pub struct GadgetOptions {
     pub configfs_root: Option<PathBuf>,
     /// Skip `modprobe libcomposite usb_f_hid` (modules builtin or preloaded).
     pub skip_modprobe: bool,
+    /// Current to request from the host, in mA; `None` = [`DEFAULT_MAX_POWER_MA`].
+    pub max_power: Option<u32>,
 }
 
 /// A configured (and, after [`UsbGadget::bind`], UDC-bound) USB gadget.
@@ -82,7 +88,8 @@ impl UsbGadget {
             slf.teardown()
                 .context("Failed to remove a stale gadget (reboot to clear it)")?;
         }
-        slf.setup().context("Failed to set up configfs gadget")?;
+        slf.setup(options.max_power)
+            .context("Failed to set up configfs gadget")?;
 
         let udc = match options.udc {
             Some(udc) => udc,
@@ -118,7 +125,7 @@ impl UsbGadget {
         self.gadget_path.join("functions/hid.usb0")
     }
 
-    fn setup(&self) -> anyhow::Result<()> {
+    fn setup(&self, max_power: Option<u32>) -> anyhow::Result<()> {
         let g = &self.gadget_path;
         fs::create_dir_all(g).with_context(|| format!("Failed to create {g:?}"))?;
 
@@ -156,7 +163,14 @@ impl UsbGadget {
             config.join("strings/0x409/configuration"),
             "Nintendo Switch Pro Controller",
         )?;
-        write(config.join("MaxPower"), "500")?;
+        // Bus-powered devices declare what they draw so the host can
+        // budget it; 500 mA is what a real Pro Controller asks for (it
+        // charges over this port). A board powered independently should
+        // ask for 0.
+        write(
+            config.join("MaxPower"),
+            max_power.unwrap_or(DEFAULT_MAX_POWER_MA).to_string(),
+        )?;
         // 0x80 = bus-powered, **no remote wakeup**.
         //
         // This was 0xa0, which additionally advertises remote wakeup (bit
