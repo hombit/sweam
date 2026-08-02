@@ -63,6 +63,28 @@ precisely so you can.
   "verified fixed" was optimistic — what that fix stopped was the *bursts*
   of `0x21` retries, not the teardown.
 
+### State at the end of 2026-08-02
+
+Deployed: `cadf5ab`, gyro parked (`enabled "0"`), tracing armed. Awaiting one
+Switch session to say whether matching the reference descriptors fixed the
+drops.
+
+Tonight's score, honestly: five changes aimed at the disconnects, none of
+which fixed them (`8316911` pacing, `b34de32` single writer, `dc1f351`
+remote wakeup — reverted, plus two instrumentation fixes). Two theories were
+falsified outright by reading sources: the 8-17 ms window is not a
+disconnect threshold, and a `0x21` reply does not replace a `0x30`. What
+did produce results was measuring — the gadget trace showed the teardown is
+Suspend → Reset, and the SN30 gave us reference descriptors. Reach for those
+two before reasoning about the protocol.
+
+Everything comparable now matches the reference; the last known divergence
+is `bInterval` (reference 8, we publish 10 at full speed) and it is
+hardcoded per speed in f_hid, so userspace cannot reach 8. If the drops
+persist and the trace still shows Suspend → Reset, that is the next thread:
+patching f_hid, or another gadget mechanism that lets us set the endpoint
+interval.
+
 ### Reference descriptors (2026-08-02) — what the Switch accepts
 
 An 8BitDo SN30 Pro in Switch mode enumerates as **057e:2009**, i.e. it
