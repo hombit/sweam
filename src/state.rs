@@ -97,6 +97,23 @@ impl ImuSample {
     pub const ACCEL_PER_G: f32 = 4096.0;
     /// Gyro raw units per degree/second at the ±2000 dps default range.
     pub const GYRO_PER_DPS: f32 = 16.4;
+
+    /// A controller sitting still: gravity on the up axis, no rotation.
+    ///
+    /// Needed because [`Self::default`] — all zeros — describes something
+    /// physically impossible. An accelerometer in free fall reads zero and
+    /// nothing else does, so a real controller always reports ~1 g
+    /// somewhere. The Switch checks: given all-zero frames after it enables
+    /// the IMU it tears the USB connection down within a second or two
+    /// (hardware, 2026-08-02 — 99 disconnects in one session, every one of
+    /// them immediately after subcommand 0x40).
+    ///
+    /// Up is +Z per hid-nintendo's alignment note ("Z: positive is pointing
+    /// up (out of the buttons/sticks)").
+    pub const AT_REST: Self = Self {
+        accel: [0, 0, 4096], // Self::ACCEL_PER_G, which is not const-castable
+        gyro: [0, 0, 0],
+    };
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

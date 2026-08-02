@@ -79,13 +79,13 @@ const SECTOR_TAN_DEN: i64 = 65536;
 /// of finger travel (both in evdev units). See [`CAMERA_DECAY`] for how
 /// velocity turns into a sustained deflection.
 ///
-/// Raised from 4.0 to 12.0 after the first Switch session (2026-08-02):
-/// 4.0 was far too slow to aim with. The theoretical settling point assumed
-/// one position sample per tick, but the controller sends ~111 packets/s
-/// against a 125 Hz pump, so a tick often decays without any new motion to
-/// add — the effective gain is well under the arithmetic. Tune per config
-/// with `settings { "sensitivity" "N" }`.
-pub(crate) const CAMERA_SENSITIVITY_DEFAULT: f32 = 12.0;
+/// Raised 4.0 → 12.0 → 24.0 over two Switch sessions (2026-08-02); both
+/// times the verdict was "still too slow". The theoretical settling point
+/// assumed one position sample per tick, but the controller sends ~111
+/// packets/s against a 125 Hz pump, so a tick often decays without any new
+/// motion to add — the effective gain is well under the arithmetic. Tune
+/// per config with `settings { "sensitivity" "N" }`.
+pub(crate) const CAMERA_SENSITIVITY_DEFAULT: f32 = 24.0;
 
 /// Fraction of the camera deflection kept per [`Mapping::tick`] (~8 ms), an
 /// exponential decay with time constant ~49 ms (-8 ms / ln 0.85): the stick

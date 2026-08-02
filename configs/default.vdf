@@ -34,9 +34,9 @@
 			// and was ignored. Sign variants if aim inverts: "y,x,z"
 			// (pitch flipped), "-y,-x,z" (roll flipped).
 			"axes"	"y,-x,z"
-			// Extra gain on the rotation rates, if aiming feels too
-			// slow or too twitchy. Positive number, default 1.
-			// "gyro_scale"	"1"
+			// Extra gain on the rotation rates. 1.5 per the second
+			// Switch session; raise if aiming still feels slow.
+			"gyro_scale"	"1.5"
 		}
 	}
 

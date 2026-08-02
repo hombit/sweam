@@ -362,9 +362,11 @@ mod tests {
         let mut builtin = Mapping::default();
         builtin.right_pad_mode = RightPadMode::CameraStick;
         builtin.gyro = true;
-        // Motion also carries the controller→Switch axis re-framing; the
-        // built-in layout has no motion, so it keeps the identity frame.
+        // Motion also carries the controller→Switch axis re-framing and the
+        // tuned gain; the built-in layout has no motion, so it keeps the
+        // identity frame and unity gain.
         builtin.imu_axes = [(1, false), (0, true), (2, false)];
+        builtin.gyro_scale = 1.5;
         assert_eq!(parse(DEFAULT).unwrap(), builtin);
     }
 

@@ -219,7 +219,14 @@ mod tests {
             gyro: [-164, 0, 32767],
         };
 
-        assert_eq!(decode(&standard_input_report(&state, 0, true)), state);
+        // Frames 0 and 1 are untouched, and packing deliberately rewrites
+        // an all-zero frame as "at rest" — zero acceleration is physically
+        // impossible and the Switch rejects it — so the round trip is exact
+        // only for frames that carry real motion.
+        let mut expected = state;
+        expected.imu[0] = ImuSample::AT_REST;
+        expected.imu[1] = ImuSample::AT_REST;
+        assert_eq!(decode(&standard_input_report(&state, 0, true)), expected);
         assert_eq!(
             state.describe(),
             "buttons=A+Home+ZL L=(0,4095) R=(123,3210)"

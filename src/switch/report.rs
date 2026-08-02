@@ -7,7 +7,7 @@
 //! - mzyy94's known-good USB gadget setup:
 //!   <https://gist.github.com/mzyy94/60ae253a45e2759451789a117c59acf9>
 
-use crate::state::ControllerState;
+use crate::state::{ControllerState, ImuSample};
 
 /// The real Pro Controller USB HID report descriptor (203 bytes), taken
 /// verbatim from mzyy94's gadget script (see module docs). Declares input
@@ -87,6 +87,15 @@ pub fn standard_input_report(state: &ControllerState, timer: u8, with_imu: bool)
     report[2..13].copy_from_slice(&input_state_bytes(state));
     if with_imu {
         for (frame, sample) in state.imu.iter().enumerate() {
+            // An all-zero frame means "no motion source" (no controller yet,
+            // manual mode, a gap between packets), not "no acceleration" —
+            // which cannot happen outside free fall. Sending it makes the
+            // Switch drop the connection, so substitute a resting sample.
+            let sample = if *sample == ImuSample::default() {
+                ImuSample::AT_REST
+            } else {
+                *sample
+            };
             let base = 13 + frame * 12;
             for (i, value) in sample.accel.iter().chain(sample.gyro.iter()).enumerate() {
                 report[base + i * 2..base + i * 2 + 2].copy_from_slice(&value.to_le_bytes());
@@ -129,6 +138,21 @@ mod tests {
         assert_eq!(unpack_stick(&report[6..9]), (0, 4095));
         assert_eq!(unpack_stick(&report[9..12]), (2048, 2048));
         assert!(report[13..].iter().all(|&b| b == 0), "IMU zeroed when off");
+    }
+
+    #[test]
+    fn zero_imu_frames_are_sent_as_at_rest() {
+        // The Switch tears the connection down if it sees zero acceleration
+        // after enabling the IMU, so a state with no motion source must
+        // still describe a controller sitting still.
+        let report = standard_input_report(&ControllerState::default(), 0, true);
+        for frame in 0..3 {
+            let base = 13 + frame * 12;
+            let accel_z = i16::from_le_bytes([report[base + 4], report[base + 5]]);
+            assert_eq!(accel_z, 4096, "frame {frame} must carry 1 g on Z");
+            let accel_x = i16::from_le_bytes([report[base], report[base + 1]]);
+            assert_eq!(accel_x, 0);
+        }
     }
 
     #[test]
