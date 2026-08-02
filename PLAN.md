@@ -3,6 +3,90 @@
 Living roadmap — check items off as they complete, amend freely. Phases are
 ordered so every phase ends with something observable on real hardware.
 
+## ⚠ Current focus (2026-08-02): report timing, then gyro back on
+
+**Read this before touching the Switch side.** An entire session went into
+theorising about the protocol when the problem was *timing*. What settled it
+was one measurement. Measure first next time — the tooling below now exists
+precisely so you can.
+
+### What the hardware actually says
+
+- **The Switch tears the port down because our report stream is late, not
+  because it is wrong.** Gadget trace, 2026-08-02: intervals between our
+  outgoing reports were median **16.0 ms**, p90 17.0, max 17.1 — and
+  hid-nintendo (`main.rs`, `REPORT_INTERVAL`) documents the accepted window
+  as 8–17 ms. 5% of reports were already past it. With motion disabled the
+  report *bytes* were byte-for-byte identical to the July build that played
+  a full session, verified by diffing the report path.
+- **Cause**: the pump slept 8 ms and *then* did a blocking `write_all` to
+  `/dev/hidg0`, which waits for the host's next interrupt poll — another
+  ~8 ms. 8 + 8 = 16, sitting exactly on the failure threshold, so any extra
+  work per iteration tipped it over. Fixed in `8316911` by pacing against a
+  fixed deadline. **Not yet verified on hardware.**
+- This explains both regimes seen: the July build hovered at 16 ms and
+  dropped every ~30 s; today's builds do more per iteration and dropped
+  every few seconds. The 07-20 note claiming the MCU `0x21` disconnect was
+  "verified fixed" was optimistic — what that fix stopped was the *bursts*
+  of `0x21` retries, not the teardown.
+
+### Next, in order
+
+- [ ] **Verify the paced interval on the Switch** — `sudo sweam trace dump`
+      during play, then the intervals between `ep1in: cmd 'Update Transfer'`
+      timestamps. Expect ~8 ms. Everything below depends on this answer.
+- [ ] **If it floors at ~16 ms anyway, the limit is the host's poll rate**,
+      not our loop: check the interrupt endpoint's `bInterval` (f_hid picks
+      it; configfs does not expose it) against a real Pro Controller's. Then
+      the fix is the descriptor, not the pump.
+- [ ] **Stop holding locks across blocking I/O.** The pump holds the
+      `writer` mutex through a blocking write while the reader thread needs
+      the same mutex to answer subcommands, so a slow poll delays replies.
+      This is the real structural flaw, and it is fixable with the threads
+      we have.
+- [ ] **Get logging out of the hot path.** The reader thread `println!`s per
+      subcommand into journald, which can block its writer under load — and
+      a blocked reader thread holds the protocol lock. More plausible as a
+      jitter source than anything scheduler-related.
+- [ ] **Only if deadlines are still missed**: `SCHED_FIFO` on the pump
+      thread, so an 8 ms deadline stops competing with GNOME and journald on
+      a 1 GB board.
+- [ ] **Then re-enable gyro**: `configs/touch-dpad.vdf` and `default.vdf`
+      currently carry `settings { "enabled" "0" }` on the gyro group, parked
+      for the bisect. Flip to `"1"`. Motion itself is verified working on
+      the controller side; only the Switch-side axis tuning remains.
+
+### Do not repeat these
+
+- **Async/tokio**: does not help. The constraint is that the host polls on
+  its own schedule and the write completes when it does; no concurrency
+  model changes that. It would earn its place only with many concurrent
+  transports (Bluetooth, several controllers).
+- **Driving the report timer from wall-clock time**: tried in `209a45b`
+  because nxbt (`int(delta_t * 4)`, "Joy-Con uses 4.96ms as the timer tick
+  rate") and mzyy94 both do it. On hardware it made teardown ~15x faster
+  (2 s vs 23–43 s) and was reverted in `561400d`. `Protocol::set_elapsed`
+  survives, unused, with the reasoning. Do not re-try without a trace
+  explaining why it should be different.
+- **Blaming power**: the board really does lose power sometimes (see
+  Caveats), but the Switch-side drops are not that. Check
+  `journalctl -u sweam` for `Host disconnected (os error 108)` — that is the
+  host hanging up, and it is unrelated.
+
+### Tooling that now exists for this
+
+- `sweam trace start|snapshot|dump|stop` — dwc3 gadget tracepoints; usbmon
+  cannot see this traffic (it captures on a *host* controller and we are the
+  peripheral). `sweam install --trace` wires `snapshot` into the unit's
+  `ExecStopPost`, so every disconnect dumps the preceding USB events into
+  the journal with nobody at the keyboard. See TESTBED.md.
+- `Report pump stalled for N ms` — logged when our own stream gaps. Note the
+  first version of this (`825b343`) reported false stalls of up to 2112 ms
+  because it skipped its clock update while not streaming; fixed in
+  `8316911`. Trust the current one.
+- `sweam --version` prints the git commit (`build.rs`), and it heads every
+  run in the journal — so a log always names the build that wrote it.
+
 ## Phase 0 — hardware bring-up (no sweam code involved)
 
 ### 0a. Radxa Zero 3E: enable and verify USB OTG peripheral mode
