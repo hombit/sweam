@@ -41,8 +41,15 @@ precisely so you can.
   (see the correction above). `8316911` and `b34de32` are still defensible
   — a deadline is more correct than sleep-then-block, and one writer beats
   two threads fighting over one fd — but neither is proven to touch the
-  disconnects, and after both the drops continue (14 in a 30-minute
-  session, down from constant).
+  disconnects.
+- **Where `b34de32` actually landed**: gaps between drops of 30, 21, 26, 51,
+  21, 16 s (median ~24 s) across ~3 minutes of play. That is the *July
+  baseline* (`821e2c4` gave 23 s and 43 s), not an improvement on it. Read
+  it as: today's regression is fixed, the original problem is untouched.
+  Measure session length from the disconnect timestamps, not from a
+  `journalctl --since` window — a long idle gap between sessions otherwise
+  flatters the rate badly (it made me report "14 in 30 minutes" for what
+  was ~7 drops in 3 minutes).
 - **Next lead, if timing is dropped**: compare our descriptors against a
   real Pro Controller's (speed, `bInterval`, endpoint layout). If the Switch
   polls a genuine controller at 8 ms and us at 16, the difference is in what
