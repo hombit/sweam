@@ -91,6 +91,35 @@ Radxa: install, reinstall over the running service, uninstall, and a full
 cold-boot end-to-end test — service up 1 s after boot, gadget bound, and
 Steam Controller button presses decoded on the Pi by `hostcheck`.
 
+## Recording the USB conversation (gadget side)
+
+`usbmon` is no help here: it captures on a USB *host* controller, and the
+Radxa is the peripheral — the host is the Switch, which we cannot
+instrument. The gadget side records through the dwc3 driver's own ftrace
+tracepoints instead, which show bus events (reset/disconnect/suspend),
+every control request, and endpoint commands.
+
+`tools/sweam-trace` wraps the debugfs pokes. Copy it over once:
+
+```sh
+scp tools/sweam-trace radxa@192.168.1.44:
+ssh radxa@192.168.1.44 'sudo install -m755 sweam-trace /usr/local/bin/'
+```
+
+Then, around a Switch session:
+
+```sh
+sudo sweam-trace start   # 16 MB ring buffer; survives sweam restarts
+# …play until it misbehaves…
+sudo sweam-trace dump    # the events still in the ring, i.e. the most recent
+sudo sweam-trace stop
+```
+
+It is a ring buffer, so there is nothing to catch live — after a disconnect
+it still holds the events leading up to it. Pair it with the
+`Report pump stalled for N ms` lines sweam logs when its own report stream
+gaps: together they separate "the host hung up on us" from "we went quiet".
+
 ## Caveats
 
 - **No hid-nintendo on the Pi**: openSUSE Leap 16 doesn't package it
