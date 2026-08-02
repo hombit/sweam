@@ -237,8 +237,20 @@ fn main() -> anyhow::Result<()> {
     // made the disconnect hunt so slow.
     let mut last_report = std::time::Instant::now();
     let mut worst_gap = Duration::ZERO;
+    let mut next_report = std::time::Instant::now();
     while RUNNING.load(Ordering::SeqCst) {
-        std::thread::sleep(REPORT_INTERVAL);
+        // Pace against a fixed deadline, not "sleep 8 ms then work". The
+        // write below blocks until the host polls the interrupt endpoint —
+        // about 8 ms — so sleeping a further 8 ms after it doubled the
+        // period to a measured median of 16 ms, with 5% of reports past the
+        // 17 ms the host tolerates (gadget trace, 2026-08-02). That is the
+        // disconnect: the stream is late, not wrong.
+        next_report += REPORT_INTERVAL;
+        match next_report.checked_duration_since(std::time::Instant::now()) {
+            Some(delay) => std::thread::sleep(delay),
+            // Already late: resync instead of firing a catch-up burst.
+            None => next_report = std::time::Instant::now(),
+        }
         // Hotplug: while no controller is open, retry once a second. This
         // runs *in the pump*, so anything slow inside open_controller()
         // stalls the report stream (the hidraw probe sleeps between its
@@ -262,10 +274,19 @@ fn main() -> anyhow::Result<()> {
                 input = None;
                 *state = state::ControllerState::default();
             }
+            // Not streaming yet: nothing to send, and nothing to measure.
             if !protocol.streaming() {
-                continue;
+                None
+            } else {
+                Some(protocol.next_input_report(&state))
             }
-            protocol.next_input_report(&state)
+        };
+        let Some(report) = report else {
+            // Keep the stall clock honest — without this the first report
+            // after the handshake measures the whole pre-streaming wait and
+            // reports a stall that never happened.
+            last_report = std::time::Instant::now();
+            continue;
         };
         // Report the gap since the previous report, but only when it is bad
         // enough to matter and worse than anything reported so far — a stall
