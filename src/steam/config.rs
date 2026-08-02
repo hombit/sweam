@@ -391,8 +391,9 @@ mod tests {
     fn touch_dpad_config_selects_touch_mode() {
         let mapping = parse(TOUCH_DPAD).unwrap();
         assert_eq!(mapping.left_pad, LeftPadMode::TouchDpad);
-        // It tracks the default layout, motion included.
-        assert!(mapping.gyro);
+        // Motion is parked in this config while the Switch disconnects are
+        // being bisected; the group is still there, just disabled.
+        assert!(!mapping.gyro);
         // The direction bindings still apply.
         assert_eq!(mapping.button(BTN_DPAD_UP), Some(Button::Up));
         // Everything else stays as in the default layout.

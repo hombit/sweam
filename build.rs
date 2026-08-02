@@ -8,10 +8,13 @@
 use std::process::Command;
 
 fn main() {
-    // The stamp changes when HEAD moves or the index does (the latter is
-    // what keeps the -dirty suffix honest).
-    println!("cargo:rerun-if-changed=.git/HEAD");
-    println!("cargo:rerun-if-changed=.git/index");
+    // Re-run on every build. Watching .git/HEAD and .git/index is not
+    // enough: editing a tracked file without staging it changes what
+    // `git status` reports but touches neither path, so the stamp went
+    // stale and a binary built from a dirty tree claimed a clean commit —
+    // exactly the confusion this is meant to prevent. A path that never
+    // exists is the documented way to ask cargo to always re-run.
+    println!("cargo:rerun-if-changed=(always-rerun)");
 
     let commit = run(&["rev-parse", "--short", "HEAD"]);
     // A tree with uncommitted changes builds something that no commit

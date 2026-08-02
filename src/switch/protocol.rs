@@ -136,6 +136,13 @@ pub struct Protocol {
     /// Whether the host enabled the IMU (subcommand 0x40 arg 1); until then
     /// the 0x30 IMU sample fields stay zero, like a real controller.
     imu_enabled: bool,
+    /// Whether this layout has any motion to send. When false the IMU region
+    /// stays zero even after the host enables it — which is exactly how the
+    /// bridge behaved before motion existed, and that configuration played a
+    /// full Switch session without a single disconnect (2026-07-19).
+    /// Set from the config's gyro group, so `settings { "enabled" "0" }`
+    /// returns the reports to that known-good shape.
+    imu_allowed: bool,
     /// Dedupe for the raw pre-streaming traffic log: the last report seen
     /// and how many times it repeated without being printed.
     last_raw: Vec<u8>,
@@ -144,7 +151,15 @@ pub struct Protocol {
 
 impl Protocol {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            imu_allowed: true,
+            ..Self::default()
+        }
+    }
+
+    /// Whether this layout forwards motion at all; see [`Self::imu_allowed`].
+    pub fn set_imu_allowed(&mut self, allowed: bool) {
+        self.imu_allowed = allowed;
     }
 
     /// Whether the steady-state 0x30 stream should be pumped (~every 8 ms;
@@ -195,7 +210,8 @@ impl Protocol {
 
     /// Next 0x30 standard input report for the current controller state.
     pub fn next_input_report(&mut self, state: &ControllerState) -> Report {
-        report::standard_input_report(state, self.next_timer(), self.imu_enabled)
+        let with_imu = self.imu_enabled && self.imu_allowed;
+        report::standard_input_report(state, self.next_timer(), with_imu)
     }
 
     /// Advance the report timer to `elapsed` since the stream started.

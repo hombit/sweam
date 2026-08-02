@@ -136,6 +136,15 @@ fn main() -> anyhow::Result<()> {
     let mapping = (!manual_mode)
         .then(|| load_mapping(input_args.config.as_deref()))
         .transpose()?;
+    // A layout with no motion must not claim motion: keep the IMU region
+    // zeroed even if the host enables it, which is how the bridge behaved
+    // before phase 6 — a shape known to survive a full Switch session.
+    let forwards_motion = manual_mode || mapping.as_ref().is_some_and(|m| m.gyro);
+    protocol
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .set_imu_allowed(forwards_motion);
+
     let open_controller = || -> anyhow::Result<Option<Box<dyn steam::InputSource>>> {
         let Some(mapping) = mapping.clone() else {
             return Ok(None);
