@@ -51,7 +51,15 @@ fn main() -> anyhow::Result<()> {
     /// and the gadget is torn down on Drop instead of leaking in configfs.
     static RUNNING: AtomicBool = AtomicBool::new(true);
 
-    let (input_args, gadget_args, manual_mode) = match parse_command_line() {
+    // Parse first: `--version`/`--help` exit inside clap, and printing
+    // before that would duplicate their output.
+    let command = parse_command_line();
+    // First line of every run, so a journal always names the build that
+    // wrote it — deploys are a bare `scp` with nothing else recording what
+    // landed.
+    println!("sweam {}", cli::VERSION);
+
+    let (input_args, gadget_args, manual_mode) = match command {
         cli::Command::Hostcheck { device } => return hostcheck::run(device.as_deref()),
         cli::Command::Install { config, prefix } => {
             return install::install(config.as_deref(), prefix.prefix.as_deref());

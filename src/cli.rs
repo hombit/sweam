@@ -21,10 +21,15 @@ Manual mode commands (typed on stdin):
   buttons: a b x y up down left right l r zl zr plus minus home capture
            lstick rstick;  stick x/y in -1..1";
 
+/// Package version plus the git commit it was built from (see build.rs) —
+/// deploys are a plain `scp`, so this is the only way to tell which build a
+/// device is running or which one wrote a journal.
+pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("SWEAM_BUILD"), ")");
+
 #[derive(Debug, Parser, PartialEq)]
 #[command(
     name = "sweam",
-    version,
+    version = VERSION,
     about = "Steam Controller → Switch Pro Controller USB bridge",
     long_about = LONG_ABOUT,
     after_help = "Docs: README.md (usage), configs/ (mappings), PLAN.md (roadmap).",
