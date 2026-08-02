@@ -201,6 +201,22 @@ Implement `src/switch/protocol.rs` (see its doc comments and TODOs):
       quadrants (2026-07-19) — `settings { requires_click 0 }` on the
       left_trackpad group, example in configs/touch-dpad.vdf; deployed as
       the active config on the Radxa.
+- [ ] **Relative right-pad stick ("centre on touch")** — a third right-pad
+      mode: touch anywhere, drag, and the stick equals the vector dragged
+      from the touch origin; recentre on lift. No decay, no velocity, so no
+      lag and nothing to tune away. Proposed as `joystick_move` +
+      `settings { "center_on_touch" "1" }` rather than `joystick_camera`,
+      because the evidence that Valve calls this "Joystick Camera" is a
+      community forum post, not documentation (confirmed by the Steam Input
+      Essentials blog: plain Joystick Move keeps the centre at the *pad*
+      centre and is displacement-based).
+      Motivation: our `joystick_camera` is velocity-based with an
+      exponential decay, which trails the finger by the decay constant. Two
+      Switch sessions called it slow and laggy and it has already eaten a
+      sensitivity treadmill (4 → 12 → 24) plus the frozen-camera bug.
+      Plan: add opt-in, A/B against the velocity camera in one session,
+      then **delete whichever loses** — three right-pad modes is one too
+      many.
 - [ ] Investigate importing real Steam controller configs (the client's
       exported VDF layouts) for the subset that binds to gamepad outputs.
 - [x] Controller hotplug in bridge mode (2026-07-19): `sweam steam` now
