@@ -224,7 +224,6 @@ fn main() -> anyhow::Result<()> {
     // Input report pump.
     println!("Waiting for the host handshake…");
     let mut last_retry = std::time::Instant::now();
-    let started = std::time::Instant::now();
     while RUNNING.load(Ordering::SeqCst) {
         std::thread::sleep(REPORT_INTERVAL);
         // Hotplug: while no controller is open, retry once a second.
@@ -234,10 +233,6 @@ fn main() -> anyhow::Result<()> {
         }
         let report = {
             let mut protocol = lock(&protocol);
-            // The report timer is a clock the Switch times IMU frames
-            // against, so drive it from elapsed time, not from how many
-            // reports we happen to have sent.
-            protocol.set_elapsed(started.elapsed());
             let mut state = lock(&state);
             // Poll even when the host isn't streaming yet. Skipping it would
             // leave packets queueing in the kernel buffers, so a session

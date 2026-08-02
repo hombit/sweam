@@ -214,27 +214,32 @@ impl Protocol {
         report::standard_input_report(state, self.next_timer(), with_imu)
     }
 
-    /// Advance the report timer to `elapsed` since the stream started.
+    /// Advance the report timer to `elapsed` since the stream started, at a
+    /// real controller's ~4.96 ms tick.
     ///
-    /// The timer is a **clock, not a counter**: a real controller ticks it
-    /// every ~4.96 ms regardless of how often it reports, and the Switch
-    /// times the three IMU frames in each report against it. Counting one
-    /// tick per report (which is what this used to do) runs the clock slow
-    /// — 1 tick per 8 ms instead of ~1.6 — which is invisible while the IMU
-    /// is off and wrong the moment it is on. Both reference implementations
-    /// derive it from wall-clock time: nxbt `int(delta_t * 4)` with the
-    /// comment "Joy-Con uses 4.96ms as the timer tick rate", and mzyy94's
-    /// Switch-proven simulator `counter = (counter + 3) % 256` every 30 ms.
-    ///
-    /// Time is passed in rather than read here so the state machine stays
-    /// deterministic and unit-testable.
+    /// **Not currently used — see [`Self::next_timer`].** Kept because the
+    /// reasoning still stands on paper: nxbt derives the timer from
+    /// wall-clock (`int(delta_t * 4)`, "Joy-Con uses 4.96ms as the timer
+    /// tick rate") and mzyy94's Switch-proven simulator advances it by 3
+    /// every 30 ms, while we count one tick per report.
+    #[allow(dead_code)]
     pub fn set_elapsed(&mut self, elapsed: std::time::Duration) {
         const TICK: f64 = 0.004_96;
         self.timer = (elapsed.as_secs_f64() / TICK) as u64 as u8;
     }
 
+    /// One tick per report.
+    ///
+    /// Switching this to a wall-clock tick (the reasoning in
+    /// [`Self::set_elapsed`]) made the Switch tear the connection down
+    /// after ~2 s instead of ~30 s — measured against the July build in the
+    /// same session, 2026-08-02. The paper argument was good and the
+    /// hardware disagreed, so the hardware wins until there is a trace to
+    /// explain it.
     fn next_timer(&mut self) -> u8 {
-        self.timer
+        let timer = self.timer;
+        self.timer = self.timer.wrapping_add(1);
+        timer
     }
 
     fn handle_usb_command(&mut self, command: u8) -> Vec<Report> {
@@ -556,24 +561,14 @@ mod tests {
     }
 
     #[test]
-    fn timer_is_a_clock_not_a_report_counter() {
+    fn timer_increments_once_per_report() {
+        // Reverted from a wall-clock tick: that made the Switch drop the
+        // connection after ~2 s instead of ~30 s (hardware, 2026-08-02).
         let mut protocol = Protocol::new();
         let state = ControllerState::default();
-        // Same instant, many reports: the timer must not advance.
-        protocol.set_elapsed(std::time::Duration::from_millis(100));
-        let first = protocol.next_input_report(&state)[1];
-        let second = protocol.next_input_report(&state)[1];
-        assert_eq!(first, second, "the timer tracks time, not report count");
-        // ~4.96 ms per tick: 100 ms in is ~20 ticks, 200 ms in ~40.
-        assert_eq!(first, 20);
-        protocol.set_elapsed(std::time::Duration::from_millis(200));
-        assert_eq!(protocol.next_input_report(&state)[1], 40);
-        // And it wraps as a u8 rather than saturating.
-        protocol.set_elapsed(std::time::Duration::from_millis(1500));
-        assert_eq!(
-            protocol.next_input_report(&state)[1],
-            (1500.0 / 4.96) as u64 as u8
-        );
+        assert_eq!(protocol.next_input_report(&state)[1], 0);
+        assert_eq!(protocol.next_input_report(&state)[1], 1);
+        assert_eq!(protocol.next_input_report(&state)[1], 2);
     }
 
     #[test]
