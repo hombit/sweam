@@ -356,7 +356,7 @@ ValveControllerStatePacket_t, zlib, cross-checked vs ynsta MIT + hid-steam):
 | off | type | field |
 |-----|------|-------|
 | 4   | u32  | packet/sequence number |
-| 8-10| u24  | buttons (b8 bit7=A ... b10 bit4=rpad-click, part of a u64 field) |
+| 8-10| u24  | buttons — full bit table in `src/steam/packet.rs` (b8 bit7=A, b10 bit2=rpad **click**, b10 bit4=rpad **touch**; an earlier draft of this table had 10.4 as the click) |
 | 11  | u8   | left trigger 0-255 |
 | 12  | u8   | right trigger 0-255 |
 | 13-15| -   | pad |
@@ -417,3 +417,29 @@ Empty-slot interfaces simply produce no input packets.
   0x03 connect (resend 0x87) and 0x04 idle; (5) try 0x18/0x1C on hardware to
   see whether raw accel survives the dongle; fall back to deriving tilt from
   the quaternion if not.
+
+**Status 2026-08-02: implemented and hardware-verified.**
+`src/steam/packet.rs` (pure decoding, unit-tested) + `src/steam/hidraw.rs`
+(slot handling, feature reports, `InputSource`); selected by a `gyro` group
+in the config. Verified against a live controller: all 18 buttons, joystick
+full range, right-pad camera mode, gyro to ±170 dps, no disconnects.
+
+Three corrections to the research above, all learned the hard way:
+
+- **Step (5) answered: raw accel DOES cross the wireless dongle.** With IMU
+  mode `0x1C` the controller reports gravity as +1.00 g at rest over the
+  dongle. This contradicts the hid-steam field table's `*` marker ("values
+  are not sent through wireless") and SDL's FIXME, both cited above — treat
+  those as wrong for accel on this firmware. The quaternion fallback is
+  therefore unnecessary. `0x1C` is now the default.
+- **"An empty slot NAKs SET_REPORT (EPIPE)" is not reliable.** The dongle
+  acked our `0x87` on a slot whose controller was disconnected, and even
+  logged a phantom connect with serial `XXXXXXXXXX`. Acking proves nothing
+  about controller presence — only an input packet does. Worse, a controller
+  that drops can come back on a *different* slot (observed: slot 1 → slot
+  2), so a one-shot probe latches onto the wrong node and goes silent.
+  sweam now holds every candidate slot open and follows the traffic.
+- **Raw HID repeats button bits every packet; evdev only sends transitions.**
+  Any `Mapping` state keyed on a button *edge* must compare against the
+  previous value rather than trusting the event — this froze camera mode at
+  centre until fixed (`mapping.rs`, `BTN_THUMB2`).

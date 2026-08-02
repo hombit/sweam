@@ -94,7 +94,8 @@ off by default, and without it the Switch ignores USB controllers.
   `press a`, `release a`, `stick l 0.5 -1`, `neutral`.
 - `sweam steamcheck` — no gadget: prints every parsed controller input
   (with the active mapping applied) so you can check buttons and sticks.
-  Needs root *or* membership in the `input` group (it only reads evdev).
+  Needs root *or* membership in the `input` group (it only reads evdev);
+  add `--hidraw` (root only) to check motion too.
 - `sudo sweam hostcheck [/dev/hidrawN]` — run this **on a second Linux
   machine** connected to the SBC's OTG port: it performs the same USB
   handshake a Switch does and prints every decoded input it receives.
@@ -114,7 +115,43 @@ every detected value can be overridden:
 | `--configfs PATH` | configfs the detection can't see (default: per `/proc/mounts`) |
 | `--skip-modprobe` | `libcomposite`/`usb_f_hid` are builtin, or no `modprobe` binary |
 | `--evdev PATH` | force a specific `/dev/input/eventN` as the controller |
+| `--hidraw` | read raw HID packets instead of evdev — see "Motion" below |
+| `--hidraw-device PATH` | force a specific `/dev/hidrawN` as the controller (implies `--hidraw`) |
 | `hostcheck DEVICE` | force a specific `/dev/hidrawN` on the host side |
+
+### Motion (gyro) — experimental
+
+The `hid-steam` evdev device never carries the controller's IMU, so gyro
+needs the raw HID packets. **The shipped `configs/default.vdf` asks for it**,
+with a `gyro` group; [`configs/no-gyro.vdf`](configs/no-gyro.vdf) is the same
+layout without one:
+
+```
+"group"
+{
+	"source"	"gyro"
+}
+```
+
+The group binds nothing; writing it is the request. sweam then reads the
+controller over raw HID automatically, because that is the only source that
+can satisfy the layout. (`--hidraw` forces the same source for a config that
+doesn't ask — useful for testing.) Two consequences worth knowing:
+
+- It **takes the controller over**. While sweam holds the hidraw node open,
+  hid-steam withdraws its evdev device, so buttons, pads and sticks all come
+  from the raw packets too. Everything is closed and restored on exit.
+- It needs **root** (hidraw nodes are root-only), unlike the evdev path.
+
+`sudo sweam steamcheck` prints decoded motion alongside the usual state
+changes — the quickest way to see whether it works on your hardware. If it
+misbehaves, `--config configs/no-gyro.vdf` puts you back on the evdev path.
+
+The controller side is verified on real hardware: all buttons, sticks, pads
+and both gyro and accelerometer decode correctly over the wireless dongle.
+What is **not** yet settled is the Switch side — the IMU axis order and
+signs are passed through unchanged, and matching them to what the Switch
+expects needs testing against a real console. See PLAN.md phase 6.
 
 ## Custom button mappings
 
@@ -135,6 +172,8 @@ example in [`configs/`](configs/):
   (no click needed), 8-way with diagonals and a center deadzone.
 - `absolute-rightpad.vdf` — the right pad back in absolute mode: the touch
   position maps straight to stick deflection instead of driving a camera.
+- `no-gyro.vdf` — the default layout *without* the gyro group: no motion,
+  and the controller is read through hid-steam's evdev device as before.
 
 Copy one, edit the `switch_button …` values (names: `A B X Y DPAD_UP
 DPAD_DOWN DPAD_LEFT DPAD_RIGHT L R ZL ZR MINUS PLUS HOME CAPTURE LSTICK

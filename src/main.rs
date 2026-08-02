@@ -58,7 +58,8 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Uninstall { prefix } => return install::uninstall(prefix.prefix.as_deref()),
         cli::Command::Steamcheck { input } => {
-            return steamcheck::run(load_mapping(input.config.as_deref())?, input.evdev);
+            let mapping = load_mapping(input.config.as_deref())?;
+            return steamcheck::run(mapping, &input);
         }
         cli::Command::Steam { input, gadget } => (input, gadget, false),
         cli::Command::Manual { gadget } => (cli::InputOpts::default(), gadget, true),
@@ -131,8 +132,16 @@ fn main() -> anyhow::Result<()> {
         let Some(mapping) = mapping.clone() else {
             return Ok(None);
         };
-        match steam::EvdevSteamController::open(mapping, input_args.evdev.as_deref()) {
-            Ok(controller) => Ok(Some(Box::new(controller) as Box<dyn steam::InputSource>)),
+        // A layout that forwards motion can only be served by the hidraw
+        // source; --hidraw forces it for a layout that doesn't ask.
+        let use_hidraw = input_args.hidraw || mapping.gyro;
+        match steam::open_source(
+            mapping,
+            use_hidraw,
+            input_args.hidraw_device.as_deref(),
+            input_args.evdev.as_deref(),
+        ) {
+            Ok(controller) => Ok(Some(controller)),
             // Retrying can't fix permissions — fail the whole bridge.
             Err(err) if steam::is_permission_error(&err) => Err(err),
             Err(_) => Ok(None),

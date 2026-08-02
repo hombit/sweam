@@ -232,8 +232,36 @@ Implement `src/switch/protocol.rs` (see its doc comments and TODOs):
       the Radxa 2026-08-02 (the 07-20 attempt died mid-scp when the board
       went offline — same power symptom as the 08-02 outage), so this now
       only needs a USB host: the bench Pi (currently off) or a Switch.
-- [ ] Steam Controller half — **full research in Notes.md ("Steam
-      Controller IMU over hidraw", 2026-07-20)**, byte-exact. Highlights:
+- [x] Steam Controller half — **implemented and hardware-verified
+      2026-08-02**: `src/steam/packet.rs` decodes the 64-byte packets into
+      the same evdev vocabulary `mapping.rs` already speaks (so every VDF
+      config works unchanged) plus an `ImuSample`; `src/steam/hidraw.rs`
+      holds every dongle slot open, sends the 0x87 settings report and pumps
+      packets. Selected by a `gyro` group in the config (`--hidraw` forces
+      it); `configs/default.vdf` asks for it, `configs/no-gyro.vdf` opts out.
+      Verified on the Radxa against a live controller: **all 18 buttons**,
+      joystick full range, right-pad camera mode (deflects with finger
+      motion, snaps to centre one sample after it stops), gyro to ±170 dps,
+      and 45-60 s runs with zero disconnects.
+      Three findings that cost a session between them:
+      1. **Raw accel *does* cross the wireless dongle** (IMU mode 0x1C),
+         contradicting hid-steam's field table ("not sent through wireless")
+         and SDL's FIXME. Gravity reads +1.00 g at rest, which also
+         validates the ±2 g → ±8 g rescale by physics. Mode is now 0x1C.
+      2. **The controller migrates between dongle slots.** It was on slot 1,
+         dropped, and came back on slot 2 — while we kept reading slot 1 and
+         saw silence. Worse, the dongle **acks the settings report for a slot
+         with no controller on it**, so "the slot that answers" is not a
+         valid probe. Fixed: hold all four slots open, let the one that
+         delivers packets identify itself, and forget it on disconnect.
+      3. **Camera mode was frozen at centre** because `Mapping` treated every
+         `BTN_THUMB2` as a touch transition and reset the tracked position.
+         evdev only sends transitions; raw HID repeats the bit every packet,
+         so the delta was never computed. Fixed + regression test.
+- [ ] Remaining: IMU axis order/signs are passed through unchanged and need
+      tuning against a real Switch (motion game or the gyro calibration
+      screen); consider exposing `imu_mode` in the gyro group's settings.
+      Original research (byte-exact) in Notes.md. Highlights:
       enable via unnumbered feature report 0x87, register 0x30 = IMU mode
       bitmask (0x14 = quat+gyro is the proven wireless combo; raw accel over
       the dongle needs hardware verification — SDL has a FIXME); input

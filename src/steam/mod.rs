@@ -1,12 +1,20 @@
 //! Steam Controller side: read inputs into [`ControllerState`].
 //!
-//! Uses the kernel `hid-steam` driver's evdev interface (needs the
-//! `steam-devices` udev rules; the driver also disables "lizard mode" for
-//! us). Raw hidraw access comes later for haptics (phase 5) and gyro
-//! (phase 6). Dongle USB IDs: 28de:1142 (wired controller: 28de:1102).
+//! Two sources, both feeding the same [`mapping::Mapping`] so every VDF
+//! config behaves identically either way:
+//!
+//! - [`EvdevSteamController`] (default) reads the kernel `hid-steam`
+//!   driver's evdev device — buttons, pads and sticks, no motion.
+//! - [`HidrawSteamController`] (`--hidraw`) reads the controller's raw HID
+//!   packets, which is the only way to get the IMU. It takes the device
+//!   over: while it holds the node open, hid-steam withdraws its evdev
+//!   device, so the two cannot run at once.
+//!
+//! Dongle USB IDs: 28de:1142 (wired controller: 28de:1102).
 
 pub mod config;
 pub mod mapping;
+pub mod packet;
 
 use crate::state::ControllerState;
 
@@ -17,7 +25,28 @@ pub trait InputSource {
 }
 
 #[cfg(target_os = "linux")]
+pub mod hidraw;
+
+#[cfg(target_os = "linux")]
 pub use evdev_input::EvdevSteamController;
+#[cfg(target_os = "linux")]
+pub use hidraw::HidrawSteamController;
+
+/// Open whichever input source the CLI asked for. `hidraw` pins a specific
+/// `/dev/hidrawN`; `evdev` pins a specific `/dev/input/eventN`.
+#[cfg(target_os = "linux")]
+pub fn open_source(
+    mapping: mapping::Mapping,
+    use_hidraw: bool,
+    hidraw: Option<&str>,
+    evdev: Option<&str>,
+) -> anyhow::Result<Box<dyn InputSource>> {
+    if use_hidraw || hidraw.is_some() {
+        Ok(Box::new(HidrawSteamController::open(mapping, hidraw)?))
+    } else {
+        Ok(Box::new(EvdevSteamController::open(mapping, evdev)?))
+    }
+}
 
 /// Whether an error from [`EvdevSteamController::open`] is a permission
 /// problem (its chain carries an `io::Error` of kind `PermissionDenied`).

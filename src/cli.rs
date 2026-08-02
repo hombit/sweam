@@ -91,6 +91,16 @@ pub struct InputOpts {
     /// name, and capabilities
     #[arg(long, value_name = "PATH")]
     pub evdev: Option<String>,
+    /// read raw HID packets instead of the hid-steam evdev device. Implied by
+    /// a config with a "gyro" group (the IMU is only in the raw packets);
+    /// this forces it otherwise. Takes the controller over: hid-steam
+    /// withdraws its evdev device while sweam runs
+    #[arg(long)]
+    pub hidraw: bool,
+    /// the controller's /dev/hidrawN; implies --hidraw. Default: the dongle
+    /// slot that answers (or a wired controller)
+    #[arg(long, value_name = "PATH")]
+    pub hidraw_device: Option<String>,
 }
 
 /// Gadget-side options shared by `steam` and `manual`.
@@ -136,7 +146,7 @@ mod tests {
             Command::Steam {
                 input: InputOpts {
                     config: Some("a.vdf".into()),
-                    evdev: None,
+                    ..InputOpts::default()
                 },
                 gadget: GadgetOpts {
                     udc: Some("fcc00000.usb".into()),
@@ -164,6 +174,7 @@ mod tests {
                 input: InputOpts {
                     config: Some("configs/default.vdf".into()),
                     evdev: Some("/dev/input/event9".into()),
+                    ..InputOpts::default()
                 },
             }
         );

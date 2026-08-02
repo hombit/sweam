@@ -1,25 +1,21 @@
-// sweam controller mapping — replica of the built-in default layout.
+// sweam controller mapping — the default layout with motion left off.
 //
-// Syntax is Valve KeyValues ("VDF"), the format Steam itself stores
-// controller configurations in. The schema is a simplified subset of
-// Steam's controller_mappings; binding values are "switch_button <NAME>"
-// where Steam would emit "xinput_button <NAME>". Full schema reference:
-// src/steam/config.rs. Run with:  sweam steam --config configs/default.vdf
+// configs/default.vdf carries a "gyro" group, which forwards the Steam
+// Controller's IMU to the Switch and, as a side effect, makes sweam read the
+// controller over raw HID (needs root; hid-steam withdraws its evdev device
+// while sweam runs). This config drops that group, so the bridge stays on
+// the hid-steam evdev device: no motion, no root needed for `steamcheck`,
+// and hid-steam keeps managing the controller.
+//
+// Use this if gyro misbehaves (it is experimental — axis orientation is not
+// yet tuned against a real Switch), or if you want `steamcheck` without
+// sudo. Full schema reference: src/steam/config.rs. Run with:
+//   sweam steamcheck --config configs/no-gyro.vdf
 "controller_mappings"
 {
 	"version"		"1"
-	"title"			"Positional ABXY (sweam default)"
-	"description"	"Buttons match by physical position: Steam's bottom button acts as Switch B. Left pad clicks are the d-pad, joystick is the left stick, right pad drives the right stick as a mouse-like camera, full trigger pulls are ZL/ZR, grips are Capture/Home. The controller's gyro is forwarded as Pro Controller motion."
-
-	// Forward the controller's motion to the Switch. Binds nothing — the
-	// group's presence is the request — but it does pick how the controller
-	// is read: the IMU lives only in the raw HID packets, so this makes
-	// sweam use the hidraw source (needs root; hid-steam withdraws its evdev
-	// device while sweam runs). configs/no-gyro.vdf is the opt-out.
-	"group"
-	{
-		"source"	"gyro"
-	}
+	"title"			"Default layout, no motion"
+	"description"	"The default layout without the gyro group: no motion forwarding, and the controller is read through the hid-steam evdev device as before."
 
 	"group"
 	{
@@ -101,11 +97,7 @@
 	"group"
 	{
 		"source"	"right_trackpad"
-		// Finger *motion* deflects the stick and it recenters when the
-		// finger stops or lifts — a trackpad camera. Use "joystick_move"
-		// (see configs/absolute-rightpad.vdf) to map the touch position
-		// to the stick absolutely instead.
-		"mode"		"joystick_camera"
+		"mode"		"joystick_camera"	// as in configs/default.vdf
 		"bindings"
 		{
 			"click"	"switch_button RSTICK"
@@ -113,8 +105,6 @@
 		"settings"
 		{
 			"output_joystick"	"right"
-			// Camera gain: stick deflection per unit of finger travel;
-			// higher = faster camera. Positive number, default 4.
 			// "sensitivity"	"4"
 		}
 	}

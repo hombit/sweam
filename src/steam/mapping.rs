@@ -52,12 +52,14 @@ pub(crate) const BTN_GRIPR: u16 = 0x225;
 pub(crate) const BTN_GEAR_DOWN: u16 = 0x150;
 pub(crate) const BTN_GEAR_UP: u16 = 0x151;
 
-const ABS_X: u16 = 0x00;
-const ABS_Y: u16 = 0x01;
-const ABS_RX: u16 = 0x03;
-const ABS_RY: u16 = 0x04;
-const ABS_HAT0X: u16 = 0x10; // left-pad touch position
-const ABS_HAT0Y: u16 = 0x11;
+pub(crate) const ABS_X: u16 = 0x00;
+pub(crate) const ABS_Y: u16 = 0x01;
+pub(crate) const ABS_RX: u16 = 0x03;
+pub(crate) const ABS_RY: u16 = 0x04;
+pub(crate) const ABS_HAT0X: u16 = 0x10; // left-pad touch position
+pub(crate) const ABS_HAT0Y: u16 = 0x11;
+pub(crate) const ABS_HAT2X: u16 = 0x12; // right trigger, analog
+pub(crate) const ABS_HAT2Y: u16 = 0x13; // left trigger, analog
 
 /// evdev axis full scale (`hid-steam` reports symmetric -32767..=32767).
 const AXIS_MAX: i32 = 32767;
@@ -135,6 +137,12 @@ pub struct Mapping {
     pub right_pad_mode: RightPadMode,
     /// Camera-mode gain: stick deflection per unit of finger travel.
     pub camera_sensitivity: f32,
+    /// Whether this layout forwards the controller's motion to the Switch.
+    ///
+    /// This is a *requirement on the input source*, not a binding: the IMU
+    /// only exists in the raw HID packets, so a layout that asks for motion
+    /// can only be served by the hidraw source (see `steam::hidraw`).
+    pub gyro: bool,
     /// Last seen left-pad touch position (`ABS_HAT0X/Y`), tracked so a
     /// single-axis event can re-sectorize with both coordinates. Runtime
     /// state, only meaningful in [`LeftPadMode::TouchDpad`].
@@ -161,6 +169,7 @@ impl Mapping {
             left_pad: LeftPadMode::ClickDpad,
             right_pad_mode: RightPadMode::AbsoluteStick,
             camera_sensitivity: CAMERA_SENSITIVITY_DEFAULT,
+            gyro: false,
             left_pad_touch: (0, 0),
             right_pad_touched: false,
             right_pad_prev: (None, None),
@@ -186,11 +195,19 @@ impl Mapping {
         // the last position event didn't return to 0.
         if code == BTN_THUMB2 {
             if self.right_pad_mode == RightPadMode::CameraStick {
-                self.right_pad_touched = pressed;
-                self.right_pad_prev = (None, None);
-                if !pressed {
-                    self.camera_deflection = (0.0, 0.0);
-                    self.set_camera_stick(state);
+                // Only a *transition* may reset the tracked position. Sources
+                // are allowed to repeat the current state on every sample —
+                // the raw HID one does, once per packet — and resetting on
+                // each repeat would drop `right_pad_prev` before the next
+                // position could ever be compared against it, freezing the
+                // camera at center.
+                if pressed != self.right_pad_touched {
+                    self.right_pad_touched = pressed;
+                    self.right_pad_prev = (None, None);
+                    if !pressed {
+                        self.camera_deflection = (0.0, 0.0);
+                        self.set_camera_stick(state);
+                    }
                 }
             } else if !pressed {
                 match self.right_pad {
@@ -625,6 +642,27 @@ mod tests {
         let was = state.right_stick.x;
         mapping.apply_abs(&mut state, ABS_RX, 3000);
         assert!(state.right_stick.x < was);
+    }
+
+    #[test]
+    fn camera_tolerates_the_touch_flag_repeated_on_every_sample() {
+        // Regression: the raw HID source reports the touch bit in *every*
+        // packet, where evdev only reports transitions. Resetting the
+        // tracked position on each repeat froze the camera at center —
+        // the pad clicked fine but never moved the stick (hardware,
+        // 2026-08-02).
+        let mut mapping = camera_mapping();
+        let mut state = ControllerState::default();
+        for x in [0, 1000, 2000, 3000, 4000] {
+            // Packet order: positions first, then the button bits.
+            mapping.apply_abs(&mut state, ABS_RX, x);
+            mapping.apply_key(&mut state, BTN_THUMB2, true);
+        }
+        assert!(
+            state.right_stick.x > StickState::CENTER,
+            "steady rightward motion must deflect the stick, got {}",
+            state.right_stick.x
+        );
     }
 
     #[test]

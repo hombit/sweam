@@ -37,14 +37,19 @@ src/steamcheck.rs      `sweam steamcheck`: print parsed Steam Controller inputs
 src/hostcheck.rs       `sweam hostcheck`: run on the USB host — handshake over
                        hidraw + decode the 0x30 stream (hid-nintendo stand-in)
 src/vdf.rs             minimal Valve KeyValues (VDF) parser
-src/steam/             input side: InputSource trait; evdev via hid-steam first,
-                       raw hidraw later (haptics, gyro); mapping.rs layout +
-                       config.rs Steam-style VDF configs
+src/steam/             input side: InputSource trait, two implementations —
+                       evdev via hid-steam (default) and hidraw.rs (--hidraw,
+                       the only path with IMU; takes the device over from
+                       hid-steam). packet.rs decodes raw 64-byte packets into
+                       the same evdev codes mapping.rs speaks, so configs are
+                       source-agnostic; mapping.rs layout + config.rs
+                       Steam-style VDF configs
 src/switch/gadget.rs   configfs USB gadget (057e:2009), teardown on Drop,
                        stale-gadget cleanup at startup
 src/switch/report.rs   real Pro Controller HID descriptor + 0x30 report packing
 src/switch/protocol.rs handshake/subcommand state machine (0x80 → 0x21 → stream 0x30)
-configs/               example mapping configs (default, face-labels, swapped-sticks)
+configs/               example mapping configs (default, face-labels,
+                       swapped-sticks, touch-dpad, absolute-rightpad, gyro)
 ```
 
 Linux-only deps (`evdev`) are cfg-gated in `Cargo.toml` so host `cargo check` keeps working on macOS.

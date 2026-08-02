@@ -41,6 +41,13 @@
 //! `configs/default.vdf` asks for `joystick_camera` explicitly, the one
 //! place it differs from the built-in [`Mapping::default`] layout.
 //!
+//! A `"gyro"` group asks for the controller's motion to be forwarded to the
+//! Switch. It binds nothing — its presence is the request — and it decides
+//! how the controller is read: the IMU exists only in the raw HID packets,
+//! so a layout with a gyro group selects the hidraw input source (which
+//! needs root and takes the device over from `hid-steam`). `settings
+//! { "enabled" "0" }` parks the group without deleting it.
+//!
 //! A config is a *complete* layout: it starts from an empty mapping, and
 //! anything it doesn't bind stays unbound. Unknown sources and binding keys
 //! are warnings (so configs written for a future sweam still load); a
@@ -130,6 +137,12 @@ fn apply_group(mapping: &mut Mapping, group: &vdf::Block) -> anyhow::Result<()> 
                 camera_sensitivity(group).with_context(|| format!("group {source:?}"))?;
             &[("click", &[mapping::BTN_THUMBR])]
         }
+        // Motion has nothing to bind — the group's presence is the request,
+        // and it makes the layout need an input source that can see the IMU.
+        "gyro" => {
+            mapping.gyro = gyro_enabled(group).with_context(|| format!("group {source:?}"))?;
+            &[]
+        }
         other => {
             eprintln!("Config: ignoring unknown group source {other:?}");
             return Ok(());
@@ -209,6 +222,20 @@ fn right_pad_mode(group: &vdf::Block) -> anyhow::Result<RightPadMode> {
     }
 }
 
+/// `settings { "enabled" "1"|"0" }` on the gyro group. Writing the group at
+/// all means "forward motion", so `"1"` is the default; `"0"` is there to
+/// park a configured gyro group without deleting it.
+fn gyro_enabled(group: &vdf::Block) -> anyhow::Result<bool> {
+    let Some(settings) = group.get_block("settings") else {
+        return Ok(true);
+    };
+    match settings.get_str("enabled") {
+        None | Some("1") => Ok(true),
+        Some("0") => Ok(false),
+        Some(other) => bail!("bad enabled {other:?} (0|1)"),
+    }
+}
+
 /// `settings { "sensitivity" "N" }` on the right-pad group: camera-mode
 /// gain — stick deflection gained per unit of finger travel (both in evdev
 /// units), default 4. Must be a positive number.
@@ -271,13 +298,16 @@ mod tests {
     const SWAPPED: &str = include_str!("../../configs/swapped-sticks.vdf");
     const TOUCH_DPAD: &str = include_str!("../../configs/touch-dpad.vdf");
     const ABSOLUTE: &str = include_str!("../../configs/absolute-rightpad.vdf");
+    const NO_GYRO: &str = include_str!("../../configs/no-gyro.vdf");
 
     #[test]
     fn default_config_matches_builtin_mapping() {
-        // Identical to the built-in layout but for the right pad, which the
-        // shipped config puts in camera mode (see the test below).
+        // The shipped config differs from the built-in layout in exactly two
+        // deliberate ways: the right pad is a camera, and motion is on
+        // (which also moves it to the hidraw input source).
         let mut builtin = Mapping::default();
         builtin.right_pad_mode = RightPadMode::CameraStick;
+        builtin.gyro = true;
         assert_eq!(parse(DEFAULT).unwrap(), builtin);
     }
 
@@ -332,6 +362,47 @@ mod tests {
             mapping::CAMERA_SENSITIVITY_DEFAULT
         );
         assert_eq!(mapping.right_pad, StickTarget::RightStick);
+    }
+
+    #[test]
+    fn default_config_asks_for_motion() {
+        assert!(
+            parse(DEFAULT).unwrap().gyro,
+            "the gyro group requests motion"
+        );
+    }
+
+    #[test]
+    fn no_gyro_config_drops_motion_only() {
+        let mapping = parse(NO_GYRO).unwrap();
+        assert!(!mapping.gyro);
+        // Otherwise it is the default layout, camera right pad included.
+        assert_eq!(mapping.right_pad_mode, RightPadMode::CameraStick);
+        assert_eq!(mapping.button(BTN_A), Some(Button::B));
+    }
+
+    #[test]
+    fn gyro_is_off_unless_a_group_asks() {
+        // The built-in layout (no --config) stays on the evdev source.
+        assert!(!Mapping::default().gyro);
+        assert!(!parse(NO_GYRO).unwrap().gyro);
+    }
+
+    #[test]
+    fn gyro_group_can_be_parked() {
+        let mapping = parse(
+            r#""controller_mappings" { "group" {
+                "source" "gyro"
+                "settings" { "enabled" "0" }
+            } }"#,
+        )
+        .unwrap();
+        assert!(!mapping.gyro);
+        let bad = r#""controller_mappings" { "group" {
+            "source" "gyro"
+            "settings" { "enabled" "sometimes" }
+        } }"#;
+        assert!(parse(bad).is_err());
     }
 
     #[test]
