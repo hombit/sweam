@@ -129,6 +129,22 @@ impl UsbGadget {
         let g = &self.gadget_path;
         fs::create_dir_all(g).with_context(|| format!("Failed to create {g:?}"))?;
 
+        // Enumerate at full speed, like the controller we imitate.
+        //
+        // The gadget defaults to "super-speed-plus", so we came up as a
+        // high-speed device; an SN30 Pro in Switch mode (which the Switch
+        // accepts, and which enumerates as 057e:2009) is full-speed with
+        // `bInterval 8`, i.e. an 8 ms interrupt endpoint. Speed also decides
+        // which f_hid endpoint descriptors are published, so this is the
+        // only lever we have over the polling interval from userspace —
+        // f_hid hardcodes bInterval per speed (10 at full speed, 4 at high
+        // speed), with a FIXME in the kernel saying it ought to be
+        // configurable.
+        //
+        // Must be written before the UDC bind: configfs rejects it with
+        // EIO once the gadget is bound.
+        write(g.join("max_speed"), "full-speed")?;
+
         write(g.join("idVendor"), format!("{NINTENDO_VID:#06x}"))?;
         write(g.join("idProduct"), format!("{PRO_CONTROLLER_PID:#06x}"))?;
         write(g.join("bcdDevice"), "0x0200")?;
