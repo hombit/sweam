@@ -404,6 +404,18 @@ Implement `src/switch/protocol.rs` (see its doc comments and TODOs):
 - [ ] Wire the Switch side end-to-end on the real Switch (motion game or
       the Switch's own gyro calibration screen).
 
+## Appendix — someday: a no-std build
+
+Not now, and nothing should be contorted for it. Recorded only so design
+choices lean the right way when the simpler option is otherwise a wash: a
+no-std sweam (running on a microcontroller rather than an SBC) is of
+distant interest, so prefer designs that do not need threads, a runtime or
+much allocation when a plain loop does the same job.
+
+The single `poll()` loop in the current focus above is an example of that
+happening to align — it is the right call for starvation reasons today, and
+it is also the shape that would port.
+
 ## Appendix — Bluetooth: assessed, deferred
 
 Verdict: **USB first is the right call.** Two independent reasons:
