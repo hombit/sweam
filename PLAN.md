@@ -63,6 +63,34 @@ precisely so you can.
   "verified fixed" was optimistic — what that fix stopped was the *bursts*
   of `0x21` retries, not the teardown.
 
+### Reference descriptors (2026-08-02) — what the Switch accepts
+
+An 8BitDo SN30 Pro in Switch mode enumerates as **057e:2009**, i.e. it
+presents itself as a Pro Controller and the Switch accepts it. Plugged into
+the Radxa's host port, `lsusb -v -d 057e:2009` gives the reference we never
+had. Differences from what we present:
+
+| field | reference | ours | |
+|---|---|---|---|
+| `bcdUSB` | 2.00 | **2.01** | kernel overrides ours because the UDC is LPM-capable, so we advertise Link Power Management via BOS; the reference does not |
+| speed | full-speed | **high-speed** | `bInterval 8` on a full-speed device is 8 ms; ours is high-speed where f_hid uses `bInterval 4` (1 ms) |
+| `bcdHID` | 1.11 | **1.01** | f_hid hardcodes 1.01 |
+| `bmAttributes` | 0xa0 (bus powered, remote wakeup) | 0xa0 | matched again — briefly 0x80, see below |
+| `MaxPower` | 500 mA | 500 mA | ✓ |
+| HID `wDescriptorLength` | 203 | 203 | ✓ our report descriptor length is right |
+| endpoints | EP1 IN + EP2 OUT, 64 B interrupt | same | ✓ |
+| IDs/strings | 057e:2009, Nintendo Co., Ltd. / Pro Controller / 000000000001 | identical | ✓ |
+
+**Speed and LPM are the substantive divergences**, and both are properties of
+the UDC rather than of anything in our code:
+- Full-speed vs high-speed: dwc3 takes `maximum-speed = "full-speed"` in the
+  device tree. Note f_hid's full-speed `bInterval` is 10, not the reference's
+  8 — hardcoded, with a FIXME in the kernel saying it should be configurable.
+- LPM: dwc3 takes `snps,usb2-lpm-disable`, which should also stop the
+  composite driver bumping `bcdUSB` to 0x0201.
+
+Both mean a device-tree overlay on the Radxa, not a code change.
+
 ### Next, in order
 
 - [ ] **Verify the paced interval on the Switch** — `sudo sweam trace dump`

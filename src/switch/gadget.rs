@@ -171,22 +171,18 @@ impl UsbGadget {
             config.join("MaxPower"),
             max_power.unwrap_or(DEFAULT_MAX_POWER_MA).to_string(),
         )?;
-        // 0x80 = bus-powered, **no remote wakeup**.
+        // 0xa0 = bus-powered + remote wakeup, exactly what a Switch-accepted
+        // controller declares. Verified 2026-08-02 by plugging an 8BitDo
+        // SN30 Pro (which enumerates as 057e:2009) into this board:
         //
-        // This was 0xa0, which additionally advertises remote wakeup (bit
-        // 5) — a capability we cannot deliver: neither f_hid nor configfs
-        // gives userspace any way to signal it. The gadget trace shows the
-        // Switch acting on that claim, and it is the whole disconnect:
-        // every teardown is Suspend [U3] → (266 ms of nothing from us) →
-        // Reset [U0] → re-enumeration, ~27 times in one short session. A
-        // host may selectively suspend a device that says it can wake
-        // itself; when no wakeup arrives it resets the port.
+        //   bmAttributes 0xa0  (Bus Powered) Remote Wakeup
+        //   MaxPower     500mA
         //
-        // TODO(hardware): a real Pro Controller *does* support remote
-        // wakeup — pressing Home wakes a sleeping console — so if dropping
-        // the claim fixes the drops but breaks wake-from-sleep, the real
-        // answer is implementing wakeup, which needs kernel-side support.
-        write(config.join("bmAttributes"), "0x80")?;
+        // This was briefly 0x80 on the theory that advertising wakeup we
+        // cannot signal was making the Switch suspend and then reset us.
+        // The reference says otherwise, and dropping it did not stop the
+        // suspends either — so the theory was wrong twice over.
+        write(config.join("bmAttributes"), "0xa0")?;
 
         let link = config.join("hid.usb0");
         if !link.exists() {
