@@ -48,6 +48,11 @@ fn main() -> anyhow::Result<()> {
     /// Pro Controller streams every 8 ms over USB.
     const REPORT_INTERVAL: Duration = Duration::from_millis(8);
 
+    /// Cap on queued subcommand replies, drained one per report interval.
+    /// Deep enough for the Switch's init burst, shallow enough that a host
+    /// which stopped polling cannot grow it without bound.
+    const MAX_QUEUED_REPLIES: usize = 32;
+
     /// Cleared by SIGINT/SIGTERM (and by I/O errors) so the pump loop exits
     /// and the gadget is torn down on Drop instead of leaking in configfs.
     static RUNNING: AtomicBool = AtomicBool::new(true);
@@ -135,6 +140,15 @@ fn main() -> anyhow::Result<()> {
     let writer = Arc::new(Mutex::new(hidg));
     let protocol = Arc::new(Mutex::new(switch::protocol::Protocol::new()));
     let state = Arc::new(Mutex::new(state::ControllerState::default()));
+    // Replies queue here instead of being written by the reader thread.
+    // Two threads writing to /dev/hidg0 meant the reader's blocking writes
+    // held the writer mutex while waiting for the host's poll (~8 ms each),
+    // starving the report pump for the length of a subcommand burst — a
+    // measured 80 ms against a host that tolerates 17. One writer also
+    // matches the protocol: a 0x21 reply carries the input state itself, so
+    // a real controller sends a reply *instead of* a 0x30, never both.
+    let replies: Arc<Mutex<std::collections::VecDeque<switch::report::Report>>> =
+        Arc::new(Mutex::new(std::collections::VecDeque::new()));
 
     // In steam mode the controller can connect late or drop out (it sleeps
     // after idle); keep the mapping around and (re)open it from the pump
@@ -189,11 +203,13 @@ fn main() -> anyhow::Result<()> {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    // Reader thread: host output reports in, protocol replies out. On I/O
-    // errors it stops the pump loop below so main returns and Drop tears the
-    // gadget down. Lock order everywhere: protocol, then state, then writer.
+    // Reader thread: host output reports in, replies onto the queue for the
+    // pump to send — it never touches the hidg fd, so it cannot block the
+    // report stream. On I/O errors it stops the pump loop below so main
+    // returns and Drop tears the gadget down. Lock order: protocol, then
+    // state, then replies.
     std::thread::spawn({
-        let (protocol, state, writer) = (protocol.clone(), state.clone(), writer.clone());
+        let (protocol, state, replies) = (protocol.clone(), state.clone(), replies.clone());
         move || {
             let mut buf = [0u8; switch::report::REPORT_LENGTH];
             loop {
@@ -210,17 +226,19 @@ fn main() -> anyhow::Result<()> {
                         break;
                     }
                 };
-                let replies = {
+                let new_replies = {
                     let mut protocol = lock(&protocol);
                     let state = lock(&state);
                     protocol.handle_output_report(&buf[..n], &state)
                 };
-                for reply in replies {
-                    if let Err(err) = lock(&writer).write_all(&reply) {
-                        eprintln!("Failed to write reply to hidg: {err}");
-                        RUNNING.store(false, Ordering::SeqCst);
-                        return;
+                let mut queue = lock(&replies);
+                for reply in new_replies {
+                    // A host that stopped polling must not grow this without
+                    // bound; the oldest reply is the least useful.
+                    if queue.len() >= MAX_QUEUED_REPLIES {
+                        queue.pop_front();
                     }
+                    queue.push_back(reply);
                 }
             }
             RUNNING.store(false, Ordering::SeqCst);
@@ -274,11 +292,15 @@ fn main() -> anyhow::Result<()> {
                 input = None;
                 *state = state::ControllerState::default();
             }
-            // Not streaming yet: nothing to send, and nothing to measure.
-            if !protocol.streaming() {
-                None
-            } else {
+            // Replies first — they are answers the host is waiting on, and
+            // they carry the input state anyway. Note this runs before the
+            // streaming check: the handshake happens before streaming.
+            if let Some(reply) = lock(&replies).pop_front() {
+                Some(reply)
+            } else if protocol.streaming() {
                 Some(protocol.next_input_report(&state))
+            } else {
+                None
             }
         };
         let Some(report) = report else {
