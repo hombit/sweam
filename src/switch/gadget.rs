@@ -157,7 +157,22 @@ impl UsbGadget {
             "Nintendo Switch Pro Controller",
         )?;
         write(config.join("MaxPower"), "500")?;
-        write(config.join("bmAttributes"), "0xa0")?;
+        // 0x80 = bus-powered, **no remote wakeup**.
+        //
+        // This was 0xa0, which additionally advertises remote wakeup (bit
+        // 5) — a capability we cannot deliver: neither f_hid nor configfs
+        // gives userspace any way to signal it. The gadget trace shows the
+        // Switch acting on that claim, and it is the whole disconnect:
+        // every teardown is Suspend [U3] → (266 ms of nothing from us) →
+        // Reset [U0] → re-enumeration, ~27 times in one short session. A
+        // host may selectively suspend a device that says it can wake
+        // itself; when no wakeup arrives it resets the port.
+        //
+        // TODO(hardware): a real Pro Controller *does* support remote
+        // wakeup — pressing Home wakes a sleeping console — so if dropping
+        // the claim fixes the drops but breaks wake-from-sleep, the real
+        // answer is implementing wakeup, which needs kernel-side support.
+        write(config.join("bmAttributes"), "0x80")?;
 
         let link = config.join("hid.usb0");
         if !link.exists() {
