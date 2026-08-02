@@ -122,17 +122,19 @@ Mappings live in VDF files — the same Valve KeyValues format Steam stores
 controller configurations in, with a simplified schema. Start from an
 example in [`configs/`](configs/):
 
-- `default.vdf` — the built-in layout: ABXY matched by *position* (Steam's
-  bottom button acts as Switch B), left pad clicks = d-pad, joystick = left
-  stick, right pad = right stick, full trigger pulls = ZL/ZR, grips =
-  Capture/Home.
+- `default.vdf` — the recommended layout: ABXY matched by *position*
+  (Steam's bottom button acts as Switch B), left pad clicks = d-pad,
+  joystick = left stick, right pad = right stick as a mouse-like camera
+  (finger *motion* deflects the stick, which recenters when the finger stops
+  or lifts; tunable `sensitivity`), full trigger pulls = ZL/ZR, grips =
+  Capture/Home. Same as the built-in layout you get without `--config`,
+  except that one runs the right pad in absolute mode.
 - `face-labels.vdf` — ABXY matched by printed label instead.
 - `swapped-sticks.vdf` — joystick and right pad swap their Switch sticks.
 - `touch-dpad.vdf` — the left pad's *touch* position drives the d-pad
   (no click needed), 8-way with diagonals and a center deadzone.
-- `camera-rightpad.vdf` — the right pad becomes a mouse-like camera:
-  finger *motion* deflects the right stick (velocity-based, recenters when
-  the finger stops or lifts), with a tunable `sensitivity`.
+- `absolute-rightpad.vdf` — the right pad back in absolute mode: the touch
+  position maps straight to stick deflection instead of driving a camera.
 
 Copy one, edit the `switch_button …` values (names: `A B X Y DPAD_UP
 DPAD_DOWN DPAD_LEFT DPAD_RIGHT L R ZL ZR MINUS PLUS HOME CAPTURE LSTICK

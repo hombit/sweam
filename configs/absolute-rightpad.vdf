@@ -1,15 +1,15 @@
-// sweam controller mapping — default layout with the right pad in
-// mouse-like camera mode: finger *motion* deflects the right stick
-// (Steam's "joystick_camera"), instead of the touch position mapping to
-// the stick absolutely. The stick follows finger velocity and recenters
-// when the finger stops or lifts — a trackpad camera for first-person
-// games. Full schema reference: src/steam/config.rs. Run with:
-//   sweam steam --config configs/camera-rightpad.vdf
+// sweam controller mapping — default layout with the right pad back in
+// absolute mode: the touch *position* maps straight to right-stick
+// deflection (Steam's "joystick_move"), instead of the default camera
+// mode where finger motion drives the stick. Absolute mode gives a
+// stick-like, self-centering pad — no drift, but only as much range as
+// the pad is wide. Full schema reference: src/steam/config.rs. Run with:
+//   sweam steam --config configs/absolute-rightpad.vdf
 "controller_mappings"
 {
 	"version"		"1"
-	"title"			"Trackpad camera right pad"
-	"description"	"Default layout, but right-pad finger motion drives the right stick like a mouse (velocity-based camera) instead of absolute position."
+	"title"			"Absolute right pad"
+	"description"	"Default layout, but the right-pad touch position maps to the right stick absolutely (stick-like) instead of driving it as a velocity-based camera."
 
 	"group"
 	{
@@ -91,7 +91,7 @@
 	"group"
 	{
 		"source"	"right_trackpad"
-		"mode"		"joystick_camera"	// finger motion → stick (vs joystick_move)
+		"mode"		"joystick_move"	// touch position → stick (vs joystick_camera)
 		"bindings"
 		{
 			"click"	"switch_button RSTICK"
@@ -99,9 +99,6 @@
 		"settings"
 		{
 			"output_joystick"	"right"
-			// Camera gain: stick deflection per unit of finger travel;
-			// higher = faster camera. Positive number, default 4.
-			// "sensitivity"	"4"
 		}
 	}
 }

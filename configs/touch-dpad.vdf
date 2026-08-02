@@ -99,7 +99,7 @@
 	"group"
 	{
 		"source"	"right_trackpad"
-		"mode"		"joystick_move"
+		"mode"		"joystick_camera"	// as in configs/default.vdf
 		"bindings"
 		{
 			"click"	"switch_button RSTICK"
@@ -107,6 +107,7 @@
 		"settings"
 		{
 			"output_joystick"	"right"
+			// "sensitivity"	"4"
 		}
 	}
 }

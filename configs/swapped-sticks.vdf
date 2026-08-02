@@ -75,6 +75,9 @@
 	"group"
 	{
 		"source"	"right_trackpad"
+		// Absolute, unlike configs/default.vdf: here the pad drives the
+		// *movement* stick, and a velocity camera would stop the walk
+		// every time the finger stops.
 		"mode"		"joystick_move"
 		"bindings"	{ "click" "switch_button LSTICK" }	// click follows output
 		"settings"	{ "output_joystick" "left" }

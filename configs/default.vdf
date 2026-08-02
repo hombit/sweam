@@ -9,7 +9,7 @@
 {
 	"version"		"1"
 	"title"			"Positional ABXY (sweam default)"
-	"description"	"Buttons match by physical position: Steam's bottom button acts as Switch B. Left pad clicks are the d-pad, joystick is the left stick, right pad is the right stick, full trigger pulls are ZL/ZR, grips are Capture/Home."
+	"description"	"Buttons match by physical position: Steam's bottom button acts as Switch B. Left pad clicks are the d-pad, joystick is the left stick, right pad drives the right stick as a mouse-like camera, full trigger pulls are ZL/ZR, grips are Capture/Home."
 
 	"group"
 	{
@@ -91,7 +91,11 @@
 	"group"
 	{
 		"source"	"right_trackpad"
-		"mode"		"joystick_move"
+		// Finger *motion* deflects the stick and it recenters when the
+		// finger stops or lifts — a trackpad camera. Use "joystick_move"
+		// (see configs/absolute-rightpad.vdf) to map the touch position
+		// to the stick absolutely instead.
+		"mode"		"joystick_camera"
 		"bindings"
 		{
 			"click"	"switch_button RSTICK"
@@ -99,6 +103,9 @@
 		"settings"
 		{
 			"output_joystick"	"right"
+			// Camera gain: stick deflection per unit of finger travel;
+			// higher = faster camera. Positive number, default 4.
+			// "sensitivity"	"4"
 		}
 	}
 }

@@ -188,6 +188,15 @@ Implement `src/switch/protocol.rs` (see its doc comments and TODOs):
       session feedback (2026-07-19): right-pad camera feel needs work for
       first-person games (sensitivity/curve options, maybe a trackball-style
       mode instead of recenter-on-touch).
+- [x] Right pad in **camera mode in the shipped configs** (2026-08-02):
+      configs/default.vdf, face-labels.vdf and touch-dpad.vdf ask for
+      `joystick_camera` — a thumb-sized pad reaches much further as a
+      velocity camera than as an absolute stick. The code default
+      (`Mapping::default`, no `--config`) stays absolute, as does
+      swapped-sticks.vdf where the pad drives movement;
+      configs/absolute-rightpad.vdf is the opt-out (was camera-rightpad.vdf).
+      Deployed to the Radxa the same day; still needs a Switch session to
+      confirm the feel.
 - [x] Left-pad **touch position** (ABS_HAT0X/Y) as d-pad instead of click
       quadrants (2026-07-19) — `settings { requires_click 0 }` on the
       left_trackpad group, example in configs/touch-dpad.vdf; deployed as
@@ -219,8 +228,10 @@ Implement `src/switch/protocol.rs` (see its doc comments and TODOs):
       (g); `sweam hostcheck` sends IMU-enable and prints decoded motion.
       **Next: bench-verify** — Radxa: stop the service, run `sweam manual`
       (FIFO trick in TESTBED.md); Pi: `sweam hostcheck`; inject
-      `gyro 100 0 0` and expect an `imu … gyro=(+100.0,…)` line. Binary was
-      built but NOT deployed (Radxa went offline mid-scp) — deploy first.
+      `gyro 100 0 0` and expect an `imu … gyro=(+100.0,…)` line. Deployed to
+      the Radxa 2026-08-02 (the 07-20 attempt died mid-scp when the board
+      went offline — same power symptom as the 08-02 outage), so this now
+      only needs a USB host: the bench Pi (currently off) or a Switch.
 - [ ] Steam Controller half — **full research in Notes.md ("Steam
       Controller IMU over hidraw", 2026-07-20)**, byte-exact. Highlights:
       enable via unnumbered feature report 0x87, register 0x30 = IMU mode

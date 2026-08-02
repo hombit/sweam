@@ -34,10 +34,12 @@
 //! full pulls). The left pad's `dpad` group honors Steam's `requires_click`
 //! setting: `"1"` (default) presses on the click quadrants, `"0"` makes the
 //! touch position alone drive the d-pad. The right pad's mode picks how it
-//! drives its stick: `joystick_move` (default) maps the touch position
-//! absolutely, `joystick_camera` turns finger *motion* into stick
-//! deflection (mouse-like camera), tunable via
-//! `settings { "sensitivity" "N" }`.
+//! drives its stick: `joystick_move` maps the touch position absolutely,
+//! `joystick_camera` turns finger *motion* into stick deflection
+//! (mouse-like camera), tunable via `settings { "sensitivity" "N" }`. A
+//! group that omits `mode` gets `joystick_move`, as in Steam — the shipped
+//! `configs/default.vdf` asks for `joystick_camera` explicitly, the one
+//! place it differs from the built-in [`Mapping::default`] layout.
 //!
 //! A config is a *complete* layout: it starts from an empty mapping, and
 //! anything it doesn't bind stays unbound. Unknown sources and binding keys
@@ -192,10 +194,10 @@ fn left_pad_mode(group: &vdf::Block) -> anyhow::Result<LeftPadMode> {
 }
 
 /// `"mode"` on the right-pad group — Steam's own mode names: absent or
-/// `joystick_move` (the default) maps the touch position absolutely,
-/// `joystick_camera` turns finger motion into stick deflection. Unknown
-/// modes warn and fall back to absolute, matching how unknown sources and
-/// binding keys are treated.
+/// `joystick_move` maps the touch position absolutely, `joystick_camera`
+/// turns finger motion into stick deflection. Unknown modes warn and fall
+/// back to absolute, matching how unknown sources and binding keys are
+/// treated.
 fn right_pad_mode(group: &vdf::Block) -> anyhow::Result<RightPadMode> {
     match group.get_str("mode") {
         None | Some("joystick_move") => Ok(RightPadMode::AbsoluteStick),
@@ -268,11 +270,15 @@ mod tests {
     const FACE_LABELS: &str = include_str!("../../configs/face-labels.vdf");
     const SWAPPED: &str = include_str!("../../configs/swapped-sticks.vdf");
     const TOUCH_DPAD: &str = include_str!("../../configs/touch-dpad.vdf");
-    const CAMERA: &str = include_str!("../../configs/camera-rightpad.vdf");
+    const ABSOLUTE: &str = include_str!("../../configs/absolute-rightpad.vdf");
 
     #[test]
     fn default_config_matches_builtin_mapping() {
-        assert_eq!(parse(DEFAULT).unwrap(), Mapping::default());
+        // Identical to the built-in layout but for the right pad, which the
+        // shipped config puts in camera mode (see the test below).
+        let mut builtin = Mapping::default();
+        builtin.right_pad_mode = RightPadMode::CameraStick;
+        assert_eq!(parse(DEFAULT).unwrap(), builtin);
     }
 
     #[test]
@@ -317,29 +323,40 @@ mod tests {
     }
 
     #[test]
-    fn camera_config_selects_camera_mode() {
-        let mapping = parse(CAMERA).unwrap();
+    fn default_config_selects_camera_mode() {
+        let mapping = parse(DEFAULT).unwrap();
         assert_eq!(mapping.right_pad_mode, RightPadMode::CameraStick);
-        // The example leaves sensitivity commented out → the default.
+        // The config leaves sensitivity commented out → the default.
         assert_eq!(
             mapping.camera_sensitivity,
             mapping::CAMERA_SENSITIVITY_DEFAULT
         );
+        assert_eq!(mapping.right_pad, StickTarget::RightStick);
+    }
+
+    #[test]
+    fn absolute_config_selects_absolute_mode() {
+        let mapping = parse(ABSOLUTE).unwrap();
+        assert_eq!(mapping.right_pad_mode, RightPadMode::AbsoluteStick);
         // Everything else stays as in the default layout.
         assert_eq!(mapping.right_pad, StickTarget::RightStick);
         assert_eq!(mapping.joystick, StickTarget::LeftStick);
     }
 
     #[test]
-    fn right_pad_mode_defaults_to_absolute() {
-        // Both the default config (explicit "joystick_move") and a bare
-        // group without a mode keep the absolute mapping.
-        assert_eq!(
-            parse(DEFAULT).unwrap().right_pad_mode,
-            RightPadMode::AbsoluteStick
-        );
+    fn right_pad_mode_falls_back_to_absolute() {
+        // A group without a mode means joystick_move, as in Steam's schema
+        // — camera mode is the shipped config's choice, not the parser's.
         let mapping =
             parse(r#""controller_mappings" { "group" { "source" "right_trackpad" } }"#).unwrap();
+        assert_eq!(mapping.right_pad_mode, RightPadMode::AbsoluteStick);
+        let mapping = parse(
+            r#""controller_mappings" { "group" {
+                "source" "right_trackpad"
+                "mode" "joystick_move"
+            } }"#,
+        )
+        .unwrap();
         assert_eq!(mapping.right_pad_mode, RightPadMode::AbsoluteStick);
     }
 
