@@ -25,12 +25,30 @@ precisely so you can.
   therefore the host hung up" is unproven. With motion disabled the
   report *bytes* were byte-for-byte identical to the July build that played
   a full session, verified by diffing the report path.
-- **Cause of the half rate**: the pump slept 8 ms and *then* did a blocking
-  `write_all` to `/dev/hidg0`, which waits for the host's next interrupt
-  poll — another ~8 ms. 8 + 8 = 16. Fixed in `8316911` by pacing against a
-  fixed deadline. **Not yet verified on hardware**, and note that half rate
-  being *wrong* is established while half rate being the *cause of the
-  disconnects* is not (see the correction above).
+- **The 16 ms is the host's polling rate, and we cannot beat it.** Measured
+  after the deadline-pacing fix (`8316911`): median still **16.0 ms**, min
+  15.0, max 17.1 — unchanged. Ruled out on the way, so nobody re-checks:
+  `sleep(8 ms)` really costs 8.12 ms on this board (`CONFIG_HZ=250`,
+  `CONFIG_HIGH_RES_TIMERS=y`), and f_hid declares high-speed `bInterval = 4`
+  (1 ms), so the descriptor permits 16x faster polling than we observe.
+  A write to `/dev/hidg0` blocks until the transfer completes, i.e. until
+  the Switch polls, so the loop can never run faster than the host chooses.
+  Corroborated by feel: the right-pad camera decays once per pump iteration
+  and its behaviour did not change across the fix, which it would have if
+  the rate had doubled.
+- **Therefore timing may well be a red herring.** Half rate is not something
+  we can fix from the loop, and hid-nintendo does not disconnect over it
+  (see the correction above). `8316911` and `b34de32` are still defensible
+  — a deadline is more correct than sleep-then-block, and one writer beats
+  two threads fighting over one fd — but neither is proven to touch the
+  disconnects, and after both the drops continue (14 in a 30-minute
+  session, down from constant).
+- **Next lead, if timing is dropped**: compare our descriptors against a
+  real Pro Controller's (speed, `bInterval`, endpoint layout). If the Switch
+  polls a genuine controller at 8 ms and us at 16, the difference is in what
+  we declare, and f_hid hardcodes it (there is a FIXME in the kernel saying
+  it could be configurable) — which would mean a patched module or a
+  different gadget mechanism.
 - Tempting story, still unproven: July's build hovered at 16 ms and dropped
   every ~30 s, today's does more per iteration and dropped every few
   seconds. It fits, but so would other explanations; the teardowns
