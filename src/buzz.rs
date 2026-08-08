@@ -61,13 +61,11 @@ pub fn run(args: &crate::cli::BuzzOpts) -> anyhow::Result<()> {
 
     // A tune takes over the whole run: the pads are a one-voice tone
     // generator, so notes are just bursts at the right pitch back to back.
-    let tune = match (&args.notes, args.tune) {
-        (Some(spec), _) => Some(crate::melody::parse(spec).map_err(anyhow::Error::msg)?),
-        (None, Some(crate::cli::Tune::Portal)) => {
-            Some(crate::melody::parse(crate::melody::PORTAL).map_err(anyhow::Error::msg)?)
-        }
-        (None, None) => None,
-    };
+    let tune = args
+        .notes
+        .as_deref()
+        .map(|spec| crate::melody::parse(spec).map_err(anyhow::Error::msg))
+        .transpose()?;
     if let Some(mut notes) = tune {
         crate::melody::transpose(&mut notes, args.transpose);
         let side = match args.side {

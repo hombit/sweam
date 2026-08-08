@@ -138,13 +138,6 @@ pub struct InputOpts {
     pub hidraw_device: Option<String>,
 }
 
-/// Built-in tunes for `sweam buzz --tune`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-pub enum Tune {
-    /// "Still Alive", from Portal — the opening phrase
-    Portal,
-}
-
 /// Which actuator `sweam buzz` should drive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum BuzzSide {
@@ -183,12 +176,9 @@ pub struct BuzzOpts {
     /// play a tune instead of one burst: whitespace-separated NOTE[:BEATS],
     /// e.g. "C5:2 E5 G5 r:0.5". Notes are A-G with optional #/b and an
     /// octave, `r` is a rest
-    #[arg(long, value_name = "NOTES", conflicts_with = "tune")]
+    #[arg(long, value_name = "NOTES")]
     pub notes: Option<String>,
-    /// play a built-in tune (see --notes to supply your own)
-    #[arg(long, value_enum)]
-    pub tune: Option<Tune>,
-    /// tempo for --notes/--tune, in beats per minute
+    /// tempo for --notes, in beats per minute
     #[arg(long, value_name = "BPM", default_value_t = 100.0)]
     pub bpm: f32,
     /// fraction of each note left silent, 0..0.9. The actuators need real
@@ -219,7 +209,6 @@ impl Default for BuzzOpts {
             off_us: None,
             count: None,
             notes: None,
-            tune: None,
             bpm: 100.0,
             gap: 0.4,
             transpose: 0,

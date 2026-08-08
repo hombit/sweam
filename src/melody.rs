@@ -23,14 +23,6 @@ impl Note {
     }
 }
 
-/// "Still Alive", the closing song of Portal — the opening phrase, by ear
-/// and frankly approximate. It is a monophonic square wave on a trackpad, so
-/// exactness was never on the table; if it is wrong to your ear, pass your
-/// own with `--notes` rather than trusting this.
-///
-/// Roughly: *"This was a triumph / I'm making a note here: huge success."*
-pub const PORTAL: &str = "G4:1 G4:1 G4:1 C5:2 r:0.5 G4:1 G4:1 G4:1 C5:2 r:0.5 E5:1 E5:1 D5:1 C5:3";
-
 /// Shift every pitch by `semitones`, leaving rests alone.
 pub fn transpose(notes: &mut [Note], semitones: i32) {
     if semitones == 0 {
@@ -156,16 +148,5 @@ mod tests {
         assert!(notes[1].is_rest(), "a rest has no pitch to shift");
         transpose(&mut notes, -24);
         assert!((notes[0].freq_hz - 220.0).abs() < 0.01, "two octaves down");
-    }
-
-    #[test]
-    fn the_shipped_tune_parses() {
-        let notes = parse(PORTAL).unwrap();
-        assert!(notes.len() > 8);
-        // Every pitch has to be inside what the actuator can play — the
-        // cycle is two u16 microsecond fields, so anything above ~8 Hz.
-        for note in notes.iter().filter(|note| !note.is_rest()) {
-            assert!((100.0..2000.0).contains(&note.freq_hz), "{note:?}");
-        }
     }
 }
