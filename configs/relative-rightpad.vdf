@@ -1,0 +1,158 @@
+// sweam controller mapping — configs/touch-dpad.vdf with one thing changed:
+// the right pad is a *relative* stick instead of the velocity camera. Touch
+// it anywhere, drag, and the stick is the vector you have dragged from where
+// your thumb landed; it holds while you hold it and recenters when you lift.
+//
+// This exists to be A/B'd against touch-dpad.vdf (PLAN.md phase 4): the
+// camera mode deflects only while the finger is *moving*, so a swipe turns
+// you exactly as far as that swipe's travel and raising its sensitivity
+// changes nothing (measured 2026-08-03 — it already saturates). Whichever of
+// the two loses the comparison should be deleted; three right-pad modes is
+// one too many.
+// Full schema reference: src/steam/config.rs.
+// Run with:  sweam steam --config configs/relative-rightpad.vdf
+"controller_mappings"
+{
+	"version"		"1"
+	"title"			"Touch d-pad, relative right pad"
+	"description"	"Like configs/touch-dpad.vdf, but the right pad is a relative stick: the deflection is the drag from wherever the thumb landed, held while held."
+
+	// Motion forwarding, as in configs/default.vdf: makes sweam read the
+	// controller over raw HID (needs root) so the IMU is available.
+	"group"
+	{
+		"source"	"gyro"
+		"settings"
+		{
+			// Unparked 2026-08-03: motion was disabled while we bisected
+			// the Switch disconnects, and that hunt closed with a full
+			// session and zero teardowns (PLAN.md). "0" here also stops
+			// the bridge sending IMU frames at all, which is the
+			// pre-phase-6 report shape if it ever needs ruling out again.
+			"enabled"	"1"
+			// Re-frame the controller's IMU onto the Switch's axes.
+			// hid-nintendo documents the Switch frame as "X: positive
+			// toward the triggers; Y: positive to the left; Z: positive
+			// up". Our own bench data puts the Steam Controller's +Z up
+			// too (flat at rest it reads +0.98 g on Z), and hid-steam
+			// labels its X pitch / Y roll, so the controller is
+			// X=left-right, Y=forward, Z=up. Hence: Switch X (forward)
+			// takes the controller's Y, Switch Y (left) takes its
+			// negated X, Z passes through — which is also why yaw half
+			// worked before while pitch went to the Switch's roll axis
+			// and was ignored. Sign variants if aim inverts: "y,x,z"
+			// (pitch flipped), "-y,-x,z" (roll flipped).
+			"axes"	"y,-x,z"
+			// Extra gain on the rotation rates. 1.5 per the second
+			// Switch session; raise if aiming still feels slow.
+			"gyro_scale"	"1.5"
+		}
+	}
+
+	"group"
+	{
+		"source"	"button_diamond"
+		"bindings"
+		{
+			// Steam uses the Xbox layout (A bottom, B right, X left, Y top);
+			// Switch puts B bottom, A right, Y left, X top → swap to keep
+			// physical positions.
+			"button_a"	"switch_button B"
+			"button_b"	"switch_button A"
+			"button_x"	"switch_button Y"
+			"button_y"	"switch_button X"
+		}
+	}
+
+	"group"
+	{
+		"source"	"switch"
+		"bindings"
+		{
+			"left_bumper"		"switch_button L"
+			"right_bumper"		"switch_button R"
+			"button_escape"		"switch_button MINUS"	// left menu (back)
+			"button_menu"		"switch_button PLUS"	// right menu (start)
+			"button_steam"		"switch_button HOME"	// Steam logo
+			// Grip levers unbound: too easy to squeeze by accident
+			// (Home stays available on the Steam logo button).
+			"button_back_left"	"none"			// left grip lever
+			"button_back_right"	"none"			// right grip lever
+		}
+	}
+
+	"group"
+	{
+		"source"	"left_trigger"
+		"mode"		"trigger"
+		"bindings"
+		{
+			"click"	"switch_button ZL"	// full pull
+		}
+	}
+
+	"group"
+	{
+		"source"	"right_trigger"
+		"mode"		"trigger"
+		"bindings"
+		{
+			"click"	"switch_button ZR"
+		}
+	}
+
+	"group"
+	{
+		"source"	"joystick"
+		"mode"		"joystick_move"
+		"bindings"
+		{
+			"click"	"switch_button LSTICK"
+		}
+		"settings"
+		{
+			"output_joystick"	"left"
+		}
+	}
+
+	"group"
+	{
+		"source"	"left_trackpad"
+		"mode"		"dpad"
+		"bindings"
+		{
+			"dpad_north"	"switch_button DPAD_UP"
+			"dpad_south"	"switch_button DPAD_DOWN"
+			"dpad_west"		"switch_button DPAD_LEFT"
+			"dpad_east"		"switch_button DPAD_RIGHT"
+		}
+		"settings"
+		{
+			// Steam's own dpad-mode setting: "1" (the default) presses on
+			// the click quadrants, "0" makes touch position alone drive
+			// the d-pad.
+			"requires_click"	"0"
+		}
+	}
+
+	"group"
+	{
+		"source"	"right_trackpad"
+		"mode"		"joystick_move"
+		"bindings"
+		{
+			"click"	"switch_button RSTICK"
+		}
+		"settings"
+		{
+			"output_joystick"	"right"
+			// Put the stick's origin under the finger instead of at the
+			// pad's center — the whole difference from touch-dpad.vdf.
+			"center_on_touch"	"1"
+			// Gain on the drag: 1.0 needs a drag of the pad's full radius
+			// for full deflection, 2.0 (the default) half of it. Raise for
+			// a twitchier camera, lower for finer aim.
+			"scale"	"2"
+		}
+	}
+}

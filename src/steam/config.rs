@@ -34,10 +34,16 @@
 //! full pulls). The left pad's `dpad` group honors Steam's `requires_click`
 //! setting: `"1"` (default) presses on the click quadrants, `"0"` makes the
 //! touch position alone drive the d-pad. The right pad's mode picks how it
-//! drives its stick: `joystick_move` maps the touch position absolutely,
-//! `joystick_camera` turns finger *motion* into stick deflection
-//! (mouse-like camera), tunable via `settings { "sensitivity" "N" }`. A
-//! group that omits `mode` gets `joystick_move`, as in Steam — the shipped
+//! drives its stick, in three flavours:
+//!
+//! - `joystick_move` — touch position maps to stick deflection absolutely;
+//! - `joystick_move` + `settings { "center_on_touch" "1" }` — the stick is
+//!   the vector dragged from wherever the finger landed, held while held,
+//!   with the drag gain as `settings { "scale" "N" }`;
+//! - `joystick_camera` — finger *motion* becomes deflection that decays back
+//!   to center (mouse-like), gain as `settings { "sensitivity" "N" }`.
+//!
+//! A group that omits `mode` gets `joystick_move`, as in Steam — the shipped
 //! `configs/default.vdf` asks for `joystick_camera` explicitly, the one
 //! place it differs from the built-in [`Mapping::default`] layout.
 //!
@@ -138,6 +144,8 @@ fn apply_group(mapping: &mut Mapping, group: &vdf::Block) -> anyhow::Result<()> 
                 right_pad_mode(group).with_context(|| format!("group {source:?}"))?;
             mapping.camera_sensitivity =
                 camera_sensitivity(group).with_context(|| format!("group {source:?}"))?;
+            mapping.relative_scale =
+                relative_scale(group).with_context(|| format!("group {source:?}"))?;
             &[("click", &[mapping::BTN_THUMBR])]
         }
         // Motion has nothing to bind — the group's presence is the request,
@@ -217,13 +225,58 @@ fn left_pad_mode(group: &vdf::Block) -> anyhow::Result<LeftPadMode> {
 /// back to absolute, matching how unknown sources and binding keys are
 /// treated.
 fn right_pad_mode(group: &vdf::Block) -> anyhow::Result<RightPadMode> {
+    // `joystick_move` + `center_on_touch "1"` is the relative stick: Steam's
+    // own move mode keeps the center at the *pad's* center, so re-centering
+    // it under the finger is a setting on that mode rather than a mode of
+    // its own. (Deliberately not spelled `joystick_camera`: the evidence
+    // that Valve calls this "Joystick Camera" is a forum post, and our
+    // `joystick_camera` is the velocity camera it describes elsewhere.)
+    let centered = center_on_touch(group)?;
     match group.get_str("mode") {
+        None | Some("joystick_move") if centered => Ok(RightPadMode::RelativeStick),
         None | Some("joystick_move") => Ok(RightPadMode::AbsoluteStick),
-        Some("joystick_camera") => Ok(RightPadMode::CameraStick),
+        Some("joystick_camera") => {
+            if centered {
+                eprintln!(
+                    "Config: center_on_touch is a joystick_move setting; \
+                     joystick_camera already ignores where the finger lands"
+                );
+            }
+            Ok(RightPadMode::CameraStick)
+        }
         Some(other) => {
             eprintln!("Config: ignoring unknown right_trackpad mode {other:?}");
             Ok(RightPadMode::AbsoluteStick)
         }
+    }
+}
+
+/// `settings { "center_on_touch" "1" }` on the right_trackpad group: put the
+/// stick's origin wherever the finger lands instead of at the pad's center.
+fn center_on_touch(group: &vdf::Block) -> anyhow::Result<bool> {
+    let Some(settings) = group.get_block("settings") else {
+        return Ok(false);
+    };
+    match settings.get_str("center_on_touch") {
+        None | Some("0") => Ok(false),
+        Some("1") => Ok(true),
+        Some(other) => bail!("bad center_on_touch {other:?} (0|1)"),
+    }
+}
+
+/// `settings { "scale" "N" }` on the right_trackpad group: gain on the drag
+/// in [`RightPadMode::RelativeStick`]. 1.0 asks for a full-radius drag to
+/// reach full deflection.
+fn relative_scale(group: &vdf::Block) -> anyhow::Result<f32> {
+    let value = group
+        .get_block("settings")
+        .and_then(|settings| settings.get_str("scale"));
+    let Some(text) = value else {
+        return Ok(mapping::RELATIVE_SCALE_DEFAULT);
+    };
+    match text.parse::<f32>() {
+        Ok(value) if value.is_finite() && value > 0.0 => Ok(value),
+        _ => bail!("bad scale {text:?} (expected a positive number)"),
     }
 }
 
@@ -351,6 +404,7 @@ mod tests {
     const SWAPPED: &str = include_str!("../../configs/swapped-sticks.vdf");
     const TOUCH_DPAD: &str = include_str!("../../configs/touch-dpad.vdf");
     const ABSOLUTE: &str = include_str!("../../configs/absolute-rightpad.vdf");
+    const RELATIVE: &str = include_str!("../../configs/relative-rightpad.vdf");
     const NO_GYRO: &str = include_str!("../../configs/no-gyro.vdf");
     const GYRO_ONLY: &str = r#""controller_mappings" { "group" { "source" "gyro" } }"#;
 
@@ -508,6 +562,19 @@ mod tests {
     }
 
     #[test]
+    fn relative_config_is_touch_dpad_with_only_the_pad_mode_changed() {
+        let relative = parse(RELATIVE).unwrap();
+        assert_eq!(relative.right_pad_mode, RightPadMode::RelativeStick);
+        assert_eq!(relative.relative_scale, 2.0);
+        // The A/B is only meaningful if nothing else differs from the config
+        // it is being compared against.
+        let mut baseline = parse(TOUCH_DPAD).unwrap();
+        baseline.right_pad_mode = relative.right_pad_mode;
+        baseline.relative_scale = relative.relative_scale;
+        assert_eq!(baseline, relative);
+    }
+
+    #[test]
     fn right_pad_mode_falls_back_to_absolute() {
         // A group without a mode means joystick_move, as in Steam's schema
         // — camera mode is the shipped config's choice, not the parser's.
@@ -522,6 +589,69 @@ mod tests {
         )
         .unwrap();
         assert_eq!(mapping.right_pad_mode, RightPadMode::AbsoluteStick);
+    }
+
+    #[test]
+    fn center_on_touch_selects_the_relative_stick() {
+        // The mode is a setting on joystick_move, not a mode name.
+        let mapping = parse(
+            r#""controller_mappings" { "group" {
+                "source" "right_trackpad"
+                "mode" "joystick_move"
+                "settings" { "center_on_touch" "1" }
+            } }"#,
+        )
+        .unwrap();
+        assert_eq!(mapping.right_pad_mode, RightPadMode::RelativeStick);
+        assert_eq!(mapping.relative_scale, mapping::RELATIVE_SCALE_DEFAULT);
+        // Omitting mode means joystick_move, so the setting still applies.
+        let mapping = parse(
+            r#""controller_mappings" { "group" {
+                "source" "right_trackpad"
+                "settings" { "center_on_touch" "1" }
+            } }"#,
+        )
+        .unwrap();
+        assert_eq!(mapping.right_pad_mode, RightPadMode::RelativeStick);
+        // Explicitly off is the absolute pad.
+        let mapping = parse(
+            r#""controller_mappings" { "group" {
+                "source" "right_trackpad"
+                "settings" { "center_on_touch" "0" }
+            } }"#,
+        )
+        .unwrap();
+        assert_eq!(mapping.right_pad_mode, RightPadMode::AbsoluteStick);
+    }
+
+    #[test]
+    fn relative_scale_is_configurable() {
+        let mapping = parse(
+            r#""controller_mappings" { "group" {
+                "source" "right_trackpad"
+                "settings" { "center_on_touch" "1" "scale" "3.5" }
+            } }"#,
+        )
+        .unwrap();
+        assert_eq!(mapping.relative_scale, 3.5);
+    }
+
+    #[test]
+    fn bad_relative_settings_are_rejected() {
+        for (key, bad) in [
+            ("scale", "wide"),
+            ("scale", "0"),
+            ("scale", "-2"),
+            ("center_on_touch", "yes"),
+        ] {
+            let text = format!(
+                r#""controller_mappings" {{ "group" {{
+                    "source" "right_trackpad"
+                    "settings" {{ "{key}" "{bad}" }}
+                }} }}"#
+            );
+            assert!(parse(&text).is_err(), "{key} {bad:?} must be rejected");
+        }
     }
 
     #[test]

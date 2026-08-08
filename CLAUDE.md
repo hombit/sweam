@@ -49,7 +49,9 @@ src/switch/gadget.rs   configfs USB gadget (057e:2009), teardown on Drop,
 src/switch/report.rs   real Pro Controller HID descriptor + 0x30 report packing
 src/switch/protocol.rs handshake/subcommand state machine (0x80 → 0x21 → stream 0x30)
 configs/               example mapping configs (default, face-labels,
-                       swapped-sticks, touch-dpad, absolute-rightpad, gyro)
+                       swapped-sticks, touch-dpad, no-gyro, and the three
+                       right-pad flavours: absolute-rightpad,
+                       relative-rightpad, camera in default/touch-dpad)
 ```
 
 Linux-only deps (`evdev`) are cfg-gated in `Cargo.toml` so host `cargo check` keeps working on macOS.
