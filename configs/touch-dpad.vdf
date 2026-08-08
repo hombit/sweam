@@ -17,12 +17,12 @@
 		"source"	"gyro"
 		"settings"
 		{
-			// DIAGNOSTIC 2026-08-02: motion parked while we bisect the
-			// Switch disconnects. "0" also stops the bridge sending IMU
-			// frames at all, restoring the pre-phase-6 report shape that
-			// played a full session without dropping. Set back to "1"
-			// (or delete this line) to re-enable gyro.
-			"enabled"	"0"
+			// Unparked 2026-08-03: motion was disabled while we bisected
+			// the Switch disconnects, and that hunt closed with a full
+			// session and zero teardowns (PLAN.md). "0" here also stops
+			// the bridge sending IMU frames at all, which is the
+			// pre-phase-6 report shape if it ever needs ruling out again.
+			"enabled"	"1"
 			// Re-frame the controller's IMU onto the Switch's axes.
 			// hid-nintendo documents the Switch frame as "X: positive
 			// toward the triggers; Y: positive to the left; Z: positive
