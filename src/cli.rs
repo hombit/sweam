@@ -127,18 +127,8 @@ pub struct InputOpts {
     /// examples. Default: built-in positional layout
     #[arg(long, value_name = "FILE")]
     pub config: Option<String>,
-    /// the controller's /dev/input/eventN; default: detected by vendor ID,
-    /// name, and capabilities
-    #[arg(long, value_name = "PATH")]
-    pub evdev: Option<String>,
-    /// read raw HID packets instead of the hid-steam evdev device. Implied by
-    /// a config with a "gyro" group (the IMU is only in the raw packets);
-    /// this forces it otherwise. Takes the controller over: hid-steam
-    /// withdraws its evdev device while sweam runs
-    #[arg(long)]
-    pub hidraw: bool,
-    /// the controller's /dev/hidrawN; implies --hidraw. Default: the dongle
-    /// slot that answers (or a wired controller)
+    /// the controller's /dev/hidrawN. Default: every dongle slot is opened
+    /// and whichever delivers packets wins (a wired controller likewise)
     #[arg(long, value_name = "PATH")]
     pub hidraw_device: Option<String>,
 }
@@ -229,12 +219,12 @@ mod tests {
     #[test]
     fn flag_equals_value_form() {
         assert_eq!(
-            parse_str("steamcheck --config=configs/default.vdf --evdev /dev/input/event9").unwrap(),
+            parse_str("steamcheck --config=configs/default.vdf --hidraw-device /dev/hidraw3")
+                .unwrap(),
             Command::Steamcheck {
                 input: InputOpts {
                     config: Some("configs/default.vdf".into()),
-                    evdev: Some("/dev/input/event9".into()),
-                    ..InputOpts::default()
+                    hidraw_device: Some("/dev/hidraw3".into()),
                 },
             }
         );
@@ -329,18 +319,27 @@ mod tests {
                 "cannot be used multiple times",
             ),
             ("steam --turbo", "unexpected argument"),
+            // The boolean --hidraw is gone with the evdev source: raw is
+            // the only path, so there is nothing left to switch on.
+            ("steam --hidraw", "unexpected argument"),
             ("steam someudc", "unexpected argument"),
             ("manual --config a.vdf", "unexpected argument"),
-            ("manual --evdev /dev/input/event1", "unexpected argument"),
+            ("manual --hidraw-device /dev/hidraw1", "unexpected argument"),
             ("steamcheck --udc x", "unexpected argument"),
             ("steamcheck --skip-modprobe", "unexpected argument"),
             ("hostcheck --config a.vdf", "unexpected argument"),
-            ("hostcheck --evdev /dev/input/event1", "unexpected argument"),
+            (
+                "hostcheck --hidraw-device /dev/hidraw1",
+                "unexpected argument",
+            ),
             ("steamcheck stray", "unexpected argument"),
             ("steam --prefix /opt/x", "unexpected argument"),
             ("steamcheck --prefix /opt/x", "unexpected argument"),
             ("install --udc x", "unexpected argument"),
-            ("install --evdev /dev/input/event1", "unexpected argument"),
+            (
+                "install --hidraw-device /dev/hidraw1",
+                "unexpected argument",
+            ),
             ("install stray-positional", "unexpected argument"),
             ("uninstall --config a.vdf", "unexpected argument"),
             ("steam --skip-modprobe=false", "unexpected value"),

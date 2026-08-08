@@ -179,15 +179,7 @@ fn main() -> anyhow::Result<()> {
         let Some(mapping) = mapping.clone() else {
             return Ok(None);
         };
-        // A layout that forwards motion can only be served by the hidraw
-        // source; --hidraw forces it for a layout that doesn't ask.
-        let use_hidraw = input_args.hidraw || mapping.gyro;
-        match steam::open_source(
-            mapping,
-            use_hidraw,
-            input_args.hidraw_device.as_deref(),
-            input_args.evdev.as_deref(),
-        ) {
+        match steam::open_source(mapping, input_args.hidraw_device.as_deref()) {
             Ok(controller) => Ok(Some(controller)),
             // Retrying can't fix permissions — fail the whole bridge.
             Err(err) if steam::is_permission_error(&err) => Err(err),

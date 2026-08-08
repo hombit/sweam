@@ -48,14 +48,13 @@
 //! place it differs from the built-in [`Mapping::default`] layout.
 //!
 //! A `"gyro"` group asks for the controller's motion to be forwarded to the
-//! Switch. It binds nothing — its presence is the request — and it decides
-//! how the controller is read: the IMU exists only in the raw HID packets,
-//! so a layout with a gyro group selects the hidraw input source (which
-//! needs root and takes the device over from `hid-steam`). `settings
-//! { "enabled" "0" }` parks the group without deleting it; `"axes"
-//! "-z,x,y"` re-frames the controller's IMU axes onto the Switch's (`-`
-//! inverts, applies to gyro and accel alike); `"gyro_scale" "N"` trims the
-//! rotation rates.
+//! Switch. It binds nothing — its presence is the request. Without it the
+//! IMU is still read (the bridge always reads raw HID) but the Switch is
+//! told the controller has none, and the report's motion region stays
+//! zeroed. `settings { "enabled" "0" }` parks the group without deleting
+//! it; `"axes" "-z,x,y"` re-frames the controller's IMU axes onto the
+//! Switch's (`-` inverts, applies to gyro and accel alike); `"gyro_scale"
+//! "N"` trims the rotation rates.
 //!
 //! A config is a *complete* layout: it starts from an empty mapping, and
 //! anything it doesn't bind stays unbound. Unknown sources and binding keys
@@ -148,8 +147,8 @@ fn apply_group(mapping: &mut Mapping, group: &vdf::Block) -> anyhow::Result<()> 
                 relative_scale(group).with_context(|| format!("group {source:?}"))?;
             &[("click", &[mapping::BTN_THUMBR])]
         }
-        // Motion has nothing to bind — the group's presence is the request,
-        // and it makes the layout need an input source that can see the IMU.
+        // Motion has nothing to bind — the group's presence is the request
+        // to forward the IMU the bridge is already reading.
         "gyro" => {
             mapping.gyro = gyro_enabled(group).with_context(|| format!("group {source:?}"))?;
             mapping.imu_axes = imu_axes(group).with_context(|| format!("group {source:?}"))?;
@@ -411,8 +410,7 @@ mod tests {
     #[test]
     fn default_config_matches_builtin_mapping() {
         // The shipped config differs from the built-in layout in exactly two
-        // deliberate ways: the right pad is a camera, and motion is on
-        // (which also moves it to the hidraw input source).
+        // deliberate ways: the right pad is a camera, and motion is on.
         let mut builtin = Mapping::default();
         builtin.right_pad_mode = RightPadMode::CameraStick;
         builtin.gyro = true;
@@ -499,7 +497,7 @@ mod tests {
 
     #[test]
     fn gyro_is_off_unless_a_group_asks() {
-        // The built-in layout (no --config) stays on the evdev source.
+        // The built-in layout (no --config) sends no motion to the Switch.
         assert!(!Mapping::default().gyro);
         assert!(!parse(NO_GYRO).unwrap().gyro);
     }

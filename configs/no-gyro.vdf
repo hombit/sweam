@@ -1,21 +1,24 @@
 // sweam controller mapping — the default layout with motion left off.
 //
 // configs/default.vdf carries a "gyro" group, which forwards the Steam
-// Controller's IMU to the Switch and, as a side effect, makes sweam read the
-// controller over raw HID (needs root; hid-steam withdraws its evdev device
-// while sweam runs). This config drops that group, so the bridge stays on
-// the hid-steam evdev device: no motion, no root needed for `steamcheck`,
-// and hid-steam keeps managing the controller.
+// Controller's IMU to the Switch. This config drops that group: the Switch
+// is told the controller has no motion and the report's IMU region stays
+// zeroed, which is the report shape that played a full session before
+// phase 6.
+//
+// It does not change how the controller is read — sweam always reads raw
+// HID (needs root; hid-steam withdraws its evdev device while sweam runs),
+// because that is the only path carrying the IMU or reaching the haptics.
 //
 // Use this if gyro misbehaves (it is experimental — axis orientation is not
-// yet tuned against a real Switch), or if you want `steamcheck` without
-// sudo. Full schema reference: src/steam/config.rs. Run with:
+// yet tuned against a real Switch), or to rule motion out when debugging
+// something else. Full schema reference: src/steam/config.rs. Run with:
 //   sweam steamcheck --config configs/no-gyro.vdf
 "controller_mappings"
 {
 	"version"		"1"
 	"title"			"Default layout, no motion"
-	"description"	"The default layout without the gyro group: no motion forwarding, and the controller is read through the hid-steam evdev device as before."
+	"description"	"The default layout without the gyro group: the Switch is told the controller has no IMU and no motion is forwarded."
 
 	"group"
 	{

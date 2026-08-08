@@ -5,10 +5,12 @@
 //! (`steam/mapping.rs`), printing every mapped Pro Controller state change
 //! with button and stick names. The input-side counterpart of
 //! `sweam hostcheck`. Survives the controller connecting late and
-//! disconnecting: the gamepad node only exists while the controller is on.
+//! disconnecting.
 //!
-//! With `--hidraw` it reads raw HID packets instead, which also prints
-//! motion — the way to check gyro without a Switch attached.
+//! Reads the controller's raw HID packets like the bridge does (so: needs
+//! root, and hid-steam withdraws its evdev device while this runs). Motion
+//! is printed too, which makes this the way to check gyro without a Switch
+//! attached.
 
 #[cfg(target_os = "linux")]
 pub fn run(
@@ -29,12 +31,7 @@ pub fn run(
         let mut controller = {
             let mut waiting = false;
             loop {
-                match crate::steam::open_source(
-                    mapping.clone(),
-                    input.hidraw || mapping.gyro,
-                    input.hidraw_device.as_deref(),
-                    input.evdev.as_deref(),
-                ) {
+                match crate::steam::open_source(mapping.clone(), input.hidraw_device.as_deref()) {
                     Ok(controller) => break controller,
                     // Waiting can't fix missing permissions — exit instead.
                     Err(err) if crate::steam::is_permission_error(&err) => return Err(err),

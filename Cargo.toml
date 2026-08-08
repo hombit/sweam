@@ -15,7 +15,8 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 
 # Linux-only dependencies: the binary only ever runs on Linux (Radxa Zero 3E),
-# but `cargo check` should keep working on the macOS dev machine.
+# but `cargo check` should keep working on the macOS dev machine. (The `evdev`
+# crate went with the evdev input source in 2026-08; the BTN_*/ABS_* codes
+# mapping.rs speaks are plain constants and never needed it.)
 [target.'cfg(target_os = "linux")'.dependencies]
-evdev = "0.13"
 libc = "0.2"

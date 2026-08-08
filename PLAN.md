@@ -351,6 +351,13 @@ Implement `src/switch/protocol.rs` (see its doc comments and TODOs):
 - [x] Implement `steam::EvdevSteamController` (enumerate evdev, vendor 0x28de,
       name "…Steam Controller"; non-blocking poll wired into the report pump
       in `main.rs`; runs with neutral inputs when no controller is present).
+      **Removed 2026-08-08**: every shipped config asks for motion, which
+      only raw HID carries, so this source was already unreachable — and
+      nothing in `cargo test` could exercise it, since evdev needs a real
+      device node. The bridge now always reads hidraw (`--hidraw` and
+      `--evdev` are gone with it; `--hidraw-device` still pins a node). The
+      `evdev` *crate* went too; the BTN_*/ABS_* codes `mapping.rs` speaks
+      are plain constants.
 - [x] Initial mapping (`steam/mapping.rs`, pure + unit-tested, event
       vocabulary from hid-steam.c): positional ABXY swap, left-pad click
       quadrants → d-pad, joystick → left stick, right pad → right stick
@@ -415,11 +422,17 @@ Implement `src/switch/protocol.rs` (see its doc comments and TODOs):
 
 - [ ] Parse HD rumble data from `0x10`/`0x01` output reports (frequency +
       amplitude encoding in dekuNukem notes).
-- [ ] Drive Steam Controller haptic actuators via raw hidraw feature reports
-      (this is why phase 5 likely also migrates input from evdev to raw
-      hidraw — hid-steam may claim the device; use `hidraw` + lizard-mode
-      disable, see the old `hid_main.rs` experiment in git history for the
-      dongle feature-report shape).
+- [ ] Drive Steam Controller haptic actuators via raw hidraw feature reports.
+      The input side of this is already done — since 2026-08-08 the bridge
+      reads raw HID unconditionally, so the device is ours and lizard mode
+      is already disabled; only the actuator feature-report shape is still
+      unknown. (Checked: the old `hid_main.rs` experiment in git history,
+      `ad31488^`, has no haptic code — this has to come from the community
+      docs or from watching what Steam sends.)
+- [ ] Prerequisite, cheap: log the `0x10` payloads instead of dropping them
+      at `protocol.rs`, and confirm from a real game that the Switch is
+      sending rumble at all. Note `0x48` (enable vibration) is already ACKed,
+      so the console believes vibration works.
 
 ## Phase 6 — gyro passthrough
 

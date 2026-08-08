@@ -1,18 +1,20 @@
-//! Steam Controller over raw hidraw — the input source that can see motion.
+//! Steam Controller over raw hidraw — the bridge's only input source.
 //!
 //! The kernel `hid-steam` evdev device carries buttons, pads and sticks but
 //! never the IMU, so gyro passthrough (PLAN phase 6) has to read the
-//! controller's own 64-byte packets. Decoding lives in [`super::packet`];
-//! this module is the Linux plumbing around it: find the right hidraw node,
-//! ask the controller to send motion, and pump packets into the shared
+//! controller's own 64-byte packets, and haptics (phase 5) have to write
+//! feature reports back. Decoding lives in [`super::packet`]; this module is
+//! the Linux plumbing around it: find the right hidraw node, ask the
+//! controller to send motion, and pump packets into the shared
 //! [`ControllerState`] through the usual [`mapping::Mapping`].
 //!
 //! **This takes the device over.** Opening the hidraw node sets hid-steam's
 //! `client_opened`, which makes the driver unregister its evdev device and
 //! stop configuring the controller until we close. Buttons and IMU therefore
-//! *must* both come from these packets — the evdev source cannot run
-//! alongside. On close, hid-steam restores lizard mode and re-registers
-//! evdev. (See `Notes.md`, "Steam Controller IMU over hidraw".)
+//! *must* both come from these packets — which is why the evdev source that
+//! once read them was removed rather than kept as a fallback. On close,
+//! hid-steam restores lizard mode and re-registers evdev. (See `Notes.md`,
+//! "Steam Controller IMU over hidraw".)
 
 use super::{ControllerState, InputSource, mapping, packet};
 use anyhow::{Context, bail};
@@ -172,7 +174,7 @@ impl InputSource for HidrawSteamController {
         for index in 0..self.slots.len() {
             self.poll_slot(index, state)?;
         }
-        // Same time step the evdev source takes: decays camera-mode
+        // One time step per poll (~8 ms pump cadence): decays camera-mode
         // deflection, a no-op in other modes.
         self.mapping.tick(state);
         Ok(())

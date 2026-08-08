@@ -28,7 +28,7 @@ src/main.rs            gadget/protocol wire-up + signal-safe shutdown
 src/cli.rs             CLI: steam | manual | steamcheck | hostcheck |
                        install | uninstall; detect everything, override
                        anything (--udc --configfs --skip-modprobe --config
-                       --evdev --prefix)
+                       --hidraw-device --prefix)
 src/install.rs         `sweam install/uninstall`: /opt/sweam + systemd unit
                        running `sweam steam` at boot (headless use)
 src/state.rs           ControllerState/Button — shared intermediate representation
@@ -37,13 +37,12 @@ src/steamcheck.rs      `sweam steamcheck`: print parsed Steam Controller inputs
 src/hostcheck.rs       `sweam hostcheck`: run on the USB host — handshake over
                        hidraw + decode the 0x30 stream (hid-nintendo stand-in)
 src/vdf.rs             minimal Valve KeyValues (VDF) parser
-src/steam/             input side: InputSource trait, two implementations —
-                       evdev via hid-steam (default) and hidraw.rs (--hidraw,
-                       the only path with IMU; takes the device over from
-                       hid-steam). packet.rs decodes raw 64-byte packets into
-                       the same evdev codes mapping.rs speaks, so configs are
-                       source-agnostic; mapping.rs layout + config.rs
-                       Steam-style VDF configs
+src/steam/             input side: InputSource trait, one implementation —
+                       hidraw.rs, always (the only path with the IMU or the
+                       haptics; takes the device over from hid-steam, so it
+                       needs root). packet.rs decodes raw 64-byte packets
+                       into the evdev codes mapping.rs speaks; mapping.rs
+                       layout + config.rs Steam-style VDF configs
 src/switch/gadget.rs   configfs USB gadget (057e:2009), teardown on Drop,
                        stale-gadget cleanup at startup
 src/switch/report.rs   real Pro Controller HID descriptor + 0x30 report packing
@@ -54,7 +53,7 @@ configs/               example mapping configs (default, face-labels,
                        relative-rightpad, camera in default/touch-dpad)
 ```
 
-Linux-only deps (`evdev`) are cfg-gated in `Cargo.toml` so host `cargo check` keeps working on macOS.
+Linux-only deps (`libc`) and the hidraw/gadget code are cfg-gated so host `cargo check` keeps working on macOS.
 
 ## Build & check
 
