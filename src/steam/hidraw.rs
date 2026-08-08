@@ -289,6 +289,14 @@ impl HidrawSteamController {
         }
     }
 
+    /// Read back whatever the controller left in the control pipe, for
+    /// diagnosing commands whose only other feedback is a hand on the pads.
+    /// `None` before a slot has identified itself.
+    pub fn read_feature(&self) -> Option<std::io::Result<[u8; packet::PACKET_LEN + 1]>> {
+        let index = self.active?;
+        Some(get_feature(&self.slots[index].device))
+    }
+
     /// Re-apply settings to one slot after a wireless reconnect; a failure
     /// here is worth reporting but not worth dropping the connection over,
     /// since the next connect event will try again.

@@ -145,23 +145,34 @@ pub enum BuzzSide {
     Right,
 }
 
-/// `sweam buzz`: every field of the haptic command, so the useful values can
-/// be found by feel. Defaults are a middling buzz on both pads.
+/// `sweam buzz`: drive the actuators directly, in the terms the hardware
+/// actually works in — a square wave of a given pitch and duty cycle. The
+/// raw `--on-us`/`--off-us` are there for exploring past what the mapping
+/// will ask for.
 #[derive(Debug, Args, PartialEq)]
 pub struct BuzzOpts {
     /// which pad; default: both, one after the other
     #[arg(long, value_enum)]
     pub side: Option<BuzzSide>,
-    /// pulse strength, 0..65535. Start here when nothing is felt
-    #[arg(long, default_value_t = crate::steam::haptic::FULL_SCALE_AMPLITUDE)]
-    pub amplitude: u16,
-    /// pulse period in microseconds; 1/period is the pitch (default 6250 µs
-    /// = 160 Hz, the frequency the Switch idles its low rumble band at)
-    #[arg(long, value_name = "US", default_value_t = 6250)]
-    pub period_us: u16,
-    /// how long the burst should last
+    /// pitch in Hz (the actuator plays 1/(on+off))
+    #[arg(long, value_name = "HZ", default_value_t = 200.0)]
+    pub freq_hz: f32,
+    /// fraction of each cycle the actuator is energised, 0..0.5. Louder
+    /// towards 0.5; the on-time is capped regardless, see steam/haptic.rs
+    #[arg(long, default_value_t = 0.5)]
+    pub duty: f32,
+    /// how long the burst should last; ignored when --count is given
     #[arg(long, value_name = "S", default_value_t = 0.5)]
     pub seconds: f32,
+    /// raw on-time in µs, overriding --freq-hz/--duty
+    #[arg(long, value_name = "US", requires = "off_us")]
+    pub on_us: Option<u16>,
+    /// raw off-time in µs, overriding --freq-hz/--duty
+    #[arg(long, value_name = "US", requires = "on_us")]
+    pub off_us: Option<u16>,
+    /// exact number of cycles, instead of deriving it from --seconds
+    #[arg(long, value_name = "N")]
+    pub count: Option<u16>,
     /// the controller's /dev/hidrawN; default: every dongle slot
     #[arg(long, value_name = "PATH")]
     pub device: Option<String>,
@@ -171,9 +182,12 @@ impl Default for BuzzOpts {
     fn default() -> Self {
         Self {
             side: None,
-            amplitude: crate::steam::haptic::FULL_SCALE_AMPLITUDE,
-            period_us: 6250,
+            freq_hz: 200.0,
+            duty: 0.5,
             seconds: 0.5,
+            on_us: None,
+            off_us: None,
+            count: None,
             device: None,
         }
     }

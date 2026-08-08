@@ -23,6 +23,8 @@ pub fn run(args: &crate::cli::BuzzOpts) -> anyhow::Result<()> {
     use crate::steam::haptic::{HapticPulse, Side};
     use crate::steam::hidraw::HidrawSteamController;
     use crate::steam::mapping::Mapping;
+    use crate::switch::rumble::Band;
+    use anyhow::Context;
     use std::time::{Duration, Instant};
 
     /// How long to wait for a packet that says which slot holds the
@@ -54,29 +56,60 @@ pub fn run(args: &crate::cli::BuzzOpts) -> anyhow::Result<()> {
     };
     let duration = Duration::from_secs_f32(args.seconds);
     for &side in sides {
-        // count is what makes the burst last: the actuator plays `count`
-        // pulses of `period_us` and stops on its own.
-        let count = (duration.as_micros() / u128::from(args.period_us)).max(1);
-        let pulse = HapticPulse {
-            side,
-            amplitude: args.amplitude,
-            period_us: args.period_us,
-            count: u16::try_from(count).unwrap_or(u16::MAX),
+        // Raw µs if given, otherwise the same frequency/duty mapping the
+        // bridge uses — so what is felt here is what a game will feel like.
+        let mut pulse = match (args.on_us, args.off_us) {
+            (Some(on_us), Some(off_us)) => HapticPulse {
+                side,
+                on_us,
+                off_us,
+                count: 1,
+            },
+            _ => HapticPulse::from_band(
+                side,
+                Band {
+                    freq_hz: args.freq_hz,
+                    amplitude: f32::clamp(args.duty * 2.0, 0.0, 1.0),
+                },
+                duration,
+            )
+            .context("Nothing to play — check --freq-hz and --duty")?,
         };
+        if let Some(count) = args.count {
+            pulse.count = count;
+        } else if args.on_us.is_some() {
+            let cycle_us = u128::from(pulse.on_us) + u128::from(pulse.off_us);
+            pulse.count = u16::try_from(duration.as_micros() / cycle_us.max(1))
+                .unwrap_or(u16::MAX)
+                .max(1);
+        }
+        let cycle_us = f32::from(pulse.on_us) + f32::from(pulse.off_us);
         println!(
-            "{side:?}: amplitude {}, period {} µs ({:.0} Hz), {} pulses ≈ {:.2} s",
-            pulse.amplitude,
-            pulse.period_us,
-            1_000_000.0 / f32::from(pulse.period_us),
+            "{side:?}: on {} µs, off {} µs ({:.0} Hz, duty {:.0}%), {} cycles ≈ {:.2} s",
+            pulse.on_us,
+            pulse.off_us,
+            1e6 / cycle_us,
+            100.0 * f32::from(pulse.on_us) / cycle_us,
             pulse.count,
-            f32::from(pulse.count) * f32::from(pulse.period_us) / 1e6,
+            f32::from(pulse.count) * cycle_us / 1e6,
         );
         controller.send_haptic(&pulse)?;
+        // The command's only other feedback is a hand on the pads, so show
+        // whatever the controller leaves in the control pipe — an echo, an
+        // error code, or nothing at all are all informative.
+        match controller.read_feature() {
+            Some(Ok(reply)) => {
+                let head: Vec<String> = reply[..12].iter().map(|b| format!("{b:02X}")).collect();
+                println!("  readback: {}", head.join(" "));
+            }
+            Some(Err(err)) => println!("  readback failed: {err}"),
+            None => println!("  readback: (no slot identified)"),
+        }
         // Let one side finish before starting the other, so "only the left
         // one works" is a real observation rather than an artifact of both
         // firing at once.
         std::thread::sleep(duration + Duration::from_millis(150));
     }
-    println!("Sent. Felt nothing? Try a larger --amplitude, or --period-us 1000..20000.");
+    println!("Nothing felt? Try --duty 0.5 with --freq-hz 60..300, or raw --on-us/--off-us.");
     Ok(())
 }

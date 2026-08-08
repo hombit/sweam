@@ -400,6 +400,33 @@ Empty-slot interfaces simply produce no input packets.
   (GPL-2): behavioral facts only (setting ids, lizard/client behavior, battery
   offsets, retry quirk) — no code copied.
 
+### Haptics: what the 0x8f fields actually mean (2026-08-08, hardware)
+
+ynsta/steamcontroller (MIT) packs the actuator command as
+`struct('<BBBHHH', 0x8f, 0x07, position, amplitude, period, count)`, and
+those last two names are wrong — or at least, taking them literally does not
+work. Measured on a live controller over the dongle:
+
+- **field 3 is the on-time in µs, field 5 the off-time.** Pitch follows
+  `1/(on+off)`: `on=250 off=250` sounds two octaves above `on=2500 off=2500`.
+  Read as "amplitude", full scale (65535) is 65 ms of DC — it neither
+  oscillates nor is felt, which is exactly what we observed first and spent
+  an hour on.
+- **The actuators are audible before they are palpable.** The first sign of
+  life was "it kinda beeped": a piezo at 1 kHz is a tone, not a rumble.
+  Pitch, not intensity, is the parameter you notice.
+- **Long on-times drop the controller off the dongle.** A burst of 2.5 ms
+  on-times disconnected it mid-test. A piezo held energised is close to a
+  short; `haptic.rs` caps on-time at 1000 µs, which at low frequencies means
+  a narrow click train rather than a square wave.
+- **The controller acks either way.** After a `0x8f`, `HIDIOCGFEATURE`
+  returns `8F 00`, i.e. "command parsed" — it says nothing about whether the
+  element moved, so it cannot be used as a success signal. (Same trap as the
+  dongle acking `0x87` for empty slots.)
+
+The transport is the one thing that was never in doubt: the same
+`HIDIOCSFEATURE` + 64-byte padding that the `0x87` settings report uses.
+
 ### 4. Practical notes & plan
 
 - Finding the node: for each `/sys/class/hidraw/hidraw*/device`, the resolved
