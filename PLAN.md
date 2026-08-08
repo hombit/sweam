@@ -448,13 +448,15 @@ Implement `src/switch/protocol.rs` (see its doc comments and TODOs):
       `period` are the on-time and off-time of a square wave in µs, so
       "full amplitude" was 65 ms of DC and did nothing. Pitch is 1/(on+off),
       loudness is duty. Full write-up in Notes.md.
-- [ ] **Retest with fresh batteries, before trusting rumble in a game.**
-      Sustained bursts at ~50% duty knocked the controller off the dongle
-      three times in three minutes; isolated bursts never did. Either the
-      actuator browns out the radio or the cells are tired, and the two
-      call for opposite responses. `haptic.rs` is capped conservatively
-      (25% duty, 600 µs on-time) until this is settled — if it was the
-      batteries, those caps are costing output for nothing.
+- [ ] **Establish an idle disconnect baseline, then retest haptics against
+      it.** Sustained bursts at ~50% duty appeared to knock the controller
+      off three times in three minutes — but it then dropped three more
+      times with nothing playing, so the correlation is unproven and the
+      first round of measurement was worthless for want of a control.
+      Count drops over ten idle minutes, replace the batteries, count again,
+      then repeat with haptics. `haptic.rs` is capped conservatively
+      (25% duty, 600 µs on-time) meanwhile; if the drops are just wireless
+      flakiness, those caps are costing output for nothing.
 - [ ] Battery is never logged: no "battery" line all day, though
       `packet.rs` decodes it and `hidraw.rs` prints on change. Either the
       dongle does not send the status packet or we drop it. Worth fixing —

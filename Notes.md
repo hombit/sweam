@@ -419,15 +419,20 @@ work. Measured on a live controller over the dongle:
   on-times disconnected it mid-test. A piezo held energised is close to a
   short; `haptic.rs` caps on-time at 1000 µs, which at low frequencies means
   a narrow click train rather than a square wave.
-- **Sustained bursts drop the controller off the dongle.** Isolated bursts
-  are fine; a melody at ~50% duty disconnected it after three notes, three
-  times in as many minutes, against one unrelated drop in the rest of the
-  day. Cause not established — the actuator browning out the radio, or
-  simply tired batteries, both fit, and the battery packet is not being
-  logged so we could not check. `haptic.rs` now caps duty at 25% and
-  on-time at 600 µs; **before trusting rumble in a game, retest with fresh
-  batteries**, because if that is all it was, the caps are costing output
-  for nothing.
+- **Sustained bursts *may* drop the controller off the dongle — unproven.**
+  A melody at ~50% duty disconnected it after three notes, three times in as
+  many minutes, which looked conclusive at the time. It is not: later the
+  same evening the controller dropped three more times over five minutes
+  with **no haptics running at all**, once hopping from slot 1 to slot 2.
+  So this controller drops on its own, and the earlier cluster may have been
+  coincidence. Three candidates now, not two: the actuator browning out the
+  radio, tired batteries, or ordinary wireless flakiness. The battery packet
+  is never logged, so we could not check the middle one.
+
+  `haptic.rs` caps duty at 25% and on-time at 600 µs anyway, as cheap
+  insurance. **Retest with fresh batteries and a disconnect count taken with
+  the actuators idle**, so there is a baseline to compare against — without
+  one, the last round of measurement proved nothing.
 - **The actuators need silence between notes.** A tune with only a 15% gap
   came back as "just one vzzhhhh"; the same pitches with long pauses were
   clearly distinguishable, and 40–55% works. The element rings on after a
