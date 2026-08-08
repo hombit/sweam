@@ -419,6 +419,20 @@ work. Measured on a live controller over the dongle:
   on-times disconnected it mid-test. A piezo held energised is close to a
   short; `haptic.rs` caps on-time at 1000 µs, which at low frequencies means
   a narrow click train rather than a square wave.
+- **Sustained bursts drop the controller off the dongle.** Isolated bursts
+  are fine; a melody at ~50% duty disconnected it after three notes, three
+  times in as many minutes, against one unrelated drop in the rest of the
+  day. Cause not established — the actuator browning out the radio, or
+  simply tired batteries, both fit, and the battery packet is not being
+  logged so we could not check. `haptic.rs` now caps duty at 25% and
+  on-time at 600 µs; **before trusting rumble in a game, retest with fresh
+  batteries**, because if that is all it was, the caps are costing output
+  for nothing.
+- **The actuators need silence between notes.** A tune with only a 15% gap
+  came back as "just one vzzhhhh"; the same pitches with long pauses were
+  clearly distinguishable, and 40–55% works. The element rings on after a
+  burst, so notes bleed together. Pitch discrimination itself is good — 100,
+  200, 400 and 800 Hz were all told apart.
 - **The controller acks either way.** After a `0x8f`, `HIDIOCGFEATURE`
   returns `8F 00`, i.e. "command parsed" — it says nothing about whether the
   element moved, so it cannot be used as a success signal. (Same trap as the

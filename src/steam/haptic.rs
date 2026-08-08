@@ -44,10 +44,15 @@ const HAPTIC_PAYLOAD_LEN: u8 = 0x07;
 /// Duty cycle a full-strength rumble is played at.
 ///
 /// A square wave delivers the most energy — and the piezo the most output —
-/// at 50%; past that it is just the mirror image of the same waveform. So
-/// loudness is controlled by narrowing the pulse below this, and this is the
-/// ceiling rather than a tunable.
-const MAX_DUTY: f32 = 0.5;
+/// at 50%, and past that it is just the same waveform mirrored. We stay well
+/// under that: at ~50% a *sustained* sequence of bursts knocked the
+/// controller off the dongle three times in as many minutes (2026-08-08),
+/// while isolated bursts at the same duty were fine. Whether that is the
+/// radio browning out under the actuator's draw or simply tired batteries is
+/// not yet established — see Notes.md — so this is deliberately cautious
+/// until a game session says otherwise. Raising it is the first thing to try
+/// if rumble is too faint, and the first suspect if the controller drops.
+pub const MAX_DUTY: f32 = 0.25;
 
 /// Shortest on-time worth sending. Below roughly this the piezo has not
 /// moved before it is released, so a very quiet rumble would silently become
@@ -64,7 +69,7 @@ const MIN_ON_US: u16 = 20;
 /// At low frequencies this caps the duty below [`MAX_DUTY`], turning the
 /// waveform into a train of clicks, which is what these actuators do
 /// anyway.
-const MAX_ON_US: u16 = 1000;
+const MAX_ON_US: u16 = 600;
 
 /// Which actuator. Values are the wire encoding, not our choice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

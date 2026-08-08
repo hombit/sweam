@@ -16,6 +16,16 @@
 //! Whatever amplitude turns out to feel right is the number that belongs in
 //! `haptic::FULL_SCALE_AMPLITUDE`.
 
+/// `--duty` is in the units a person thinks in (fraction of the cycle
+/// energised); the mapping takes a 0..1 rumble amplitude that tops out at
+/// [`crate::steam::haptic::MAX_DUTY`]. Asking for more than the cap gets the
+/// cap, not an error — the point of the flag is exploring, and the limit
+/// exists to protect the controller.
+#[cfg(target_os = "linux")]
+fn duty_to_amplitude(duty: f32) -> f32 {
+    f32::clamp(duty / crate::steam::haptic::MAX_DUTY, 0.0, 1.0)
+}
+
 #[cfg(target_os = "linux")]
 pub fn run(args: &crate::cli::BuzzOpts) -> anyhow::Result<()> {
     use crate::state::ControllerState;
@@ -49,6 +59,52 @@ pub fn run(args: &crate::cli::BuzzOpts) -> anyhow::Result<()> {
         );
     }
 
+    // A tune takes over the whole run: the pads are a one-voice tone
+    // generator, so notes are just bursts at the right pitch back to back.
+    let tune = match (&args.notes, args.tune) {
+        (Some(spec), _) => Some(crate::melody::parse(spec).map_err(anyhow::Error::msg)?),
+        (None, Some(crate::cli::Tune::Portal)) => {
+            Some(crate::melody::parse(crate::melody::PORTAL).map_err(anyhow::Error::msg)?)
+        }
+        (None, None) => None,
+    };
+    if let Some(mut notes) = tune {
+        crate::melody::transpose(&mut notes, args.transpose);
+        let side = match args.side {
+            Some(crate::cli::BuzzSide::Right) => Side::Right,
+            _ => Side::Left,
+        };
+        let beat = Duration::from_secs_f32(60.0 / f32::max(args.bpm, 1.0));
+        println!(
+            "Playing {} notes at {:.0} bpm on {side:?}…",
+            notes.len(),
+            args.bpm
+        );
+        for note in notes {
+            let length = beat.mul_f32(note.beats);
+            if note.is_rest() {
+                std::thread::sleep(length);
+                continue;
+            }
+            let band = Band {
+                freq_hz: note.freq_hz,
+                amplitude: duty_to_amplitude(args.duty),
+            };
+            // Leave real silence at the end of each note. Measured
+            // 2026-08-08: with only a 15% gap a whole tune came back as
+            // "just one vzzhhhh" — the actuator rings on, and consecutive
+            // notes merge into a single buzz. The same four pitches with
+            // long pauses were clearly distinguishable.
+            let sounding = length.mul_f32(1.0 - f32::clamp(args.gap, 0.0, 0.9));
+            if let Some(pulse) = HapticPulse::from_band(side, band, sounding) {
+                controller.send_haptic(&pulse)?;
+            }
+            std::thread::sleep(length);
+        }
+        println!("Done.");
+        return Ok(());
+    }
+
     let sides: &[Side] = match args.side {
         Some(crate::cli::BuzzSide::Left) => &[Side::Left],
         Some(crate::cli::BuzzSide::Right) => &[Side::Right],
@@ -69,7 +125,7 @@ pub fn run(args: &crate::cli::BuzzOpts) -> anyhow::Result<()> {
                 side,
                 Band {
                     freq_hz: args.freq_hz,
-                    amplitude: f32::clamp(args.duty * 2.0, 0.0, 1.0),
+                    amplitude: duty_to_amplitude(args.duty),
                 },
                 duration,
             )

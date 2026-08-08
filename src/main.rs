@@ -12,6 +12,7 @@ mod cli;
 mod hostcheck;
 mod install;
 mod manual;
+mod melody;
 mod state;
 mod steam;
 mod steamcheck;

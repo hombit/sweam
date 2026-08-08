@@ -138,6 +138,13 @@ pub struct InputOpts {
     pub hidraw_device: Option<String>,
 }
 
+/// Built-in tunes for `sweam buzz --tune`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum Tune {
+    /// "Still Alive", from Portal — the opening phrase
+    Portal,
+}
+
 /// Which actuator `sweam buzz` should drive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum BuzzSide {
@@ -173,6 +180,29 @@ pub struct BuzzOpts {
     /// exact number of cycles, instead of deriving it from --seconds
     #[arg(long, value_name = "N")]
     pub count: Option<u16>,
+    /// play a tune instead of one burst: whitespace-separated NOTE[:BEATS],
+    /// e.g. "C5:2 E5 G5 r:0.5". Notes are A-G with optional #/b and an
+    /// octave, `r` is a rest
+    #[arg(long, value_name = "NOTES", conflicts_with = "tune")]
+    pub notes: Option<String>,
+    /// play a built-in tune (see --notes to supply your own)
+    #[arg(long, value_enum)]
+    pub tune: Option<Tune>,
+    /// tempo for --notes/--tune, in beats per minute
+    #[arg(long, value_name = "BPM", default_value_t = 100.0)]
+    pub bpm: f32,
+    /// fraction of each note left silent, 0..0.9. The actuators need real
+    /// silence between notes or consecutive ones merge into one buzz
+    #[arg(long, default_value_t = 0.4)]
+    pub gap: f32,
+    /// shift the tune by N semitones (12 = an octave up, -12 down)
+    #[arg(
+        long,
+        value_name = "N",
+        allow_negative_numbers = true,
+        default_value_t = 0
+    )]
+    pub transpose: i32,
     /// the controller's /dev/hidrawN; default: every dongle slot
     #[arg(long, value_name = "PATH")]
     pub device: Option<String>,
@@ -188,6 +218,11 @@ impl Default for BuzzOpts {
             on_us: None,
             off_us: None,
             count: None,
+            notes: None,
+            tune: None,
+            bpm: 100.0,
+            gap: 0.4,
+            transpose: 0,
             device: None,
         }
     }

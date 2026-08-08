@@ -443,6 +443,22 @@ Implement `src/switch/protocol.rs` (see its doc comments and TODOs):
       default is 128 out of 65535, so the useful scale is unknown to within
       two orders of magnitude). Try `--amplitude`, then `--period-us`
       (1000..20000).
+- [x] **Verified by feel (2026-08-08): vibration works.** What took the
+      hour was a misreading — the two u16 fields ynsta calls `amplitude` and
+      `period` are the on-time and off-time of a square wave in µs, so
+      "full amplitude" was 65 ms of DC and did nothing. Pitch is 1/(on+off),
+      loudness is duty. Full write-up in Notes.md.
+- [ ] **Retest with fresh batteries, before trusting rumble in a game.**
+      Sustained bursts at ~50% duty knocked the controller off the dongle
+      three times in three minutes; isolated bursts never did. Either the
+      actuator browns out the radio or the cells are tired, and the two
+      call for opposite responses. `haptic.rs` is capped conservatively
+      (25% duty, 600 µs on-time) until this is settled — if it was the
+      batteries, those caps are costing output for nothing.
+- [ ] Battery is never logged: no "battery" line all day, though
+      `packet.rs` decodes it and `hidraw.rs` prints on change. Either the
+      dongle does not send the status packet or we drop it. Worth fixing —
+      it would have answered the question above immediately.
 - [ ] Then in a game: confirm the Switch actually sends rumble (the journal
       now says "Host enabled vibration"), and judge whether one piezo per
       side can express two-band HD rumble at all. `SideRumble::dominant`
