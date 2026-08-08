@@ -18,6 +18,11 @@ Both reachable over LAN; SSH key auth set up from the dev machine.
   needs root for configfs/modprobe.
 - **Radxa: OTG peripheral mode** enabled (PLAN.md phase 0a); UDC is
   `fcc00000.usb` (not the `.dwc3` name PLAN.md predicted).
+- **Radxa: desktop disabled** (2026-08-03) — `systemctl set-default
+  multi-user.target`. GNOME was crash-looping a session every ~35 s (6287
+  `gdm-x-session` lines in one day) on a 1 GB board that runs headless
+  anyway; disabling it freed ~130 MB. Undo with `set-default
+  graphical.target` if a screen is ever needed.
 - No Rust toolchain on either board (1 GB RAM on the Radxa); build on the
   dev machine instead — see below.
 - Runtime setup (modprobe `libcomposite`/`usb_f_hid`, configfs gadget, UDC
@@ -45,6 +50,17 @@ sleep 3600 > /tmp/sweam.fifo &
 sudo ./sweam manual < /tmp/sweam.fifo > /tmp/sweam.log 2>&1 &
 echo "press a" > /tmp/sweam.fifo    # inject from any later ssh call
 ```
+
+**Against a real Switch**, two things bite (both verified 2026-08-03):
+
+- Every restart re-enumerates, which drops the Switch to **"Press L+R"**.
+  L+R alone is not enough — send `press l r`, release, then **`press a` two
+  or three seconds later** to leave Change Grip/Order. The Switch answers a
+  successful registration with subcommands `0x48 / 0x21 / 0x30 / 0x22` in
+  the log, so the journal tells you whether it took without looking up.
+- Do not kill the old instance with `pkill -f "sweam manual"` over SSH: the
+  pattern matches the shell running your own command and kills the session.
+  Use the PID from `pgrep`, or `pkill -x sweam`.
 
 Host side (RPi3): `sudo ./sweam hostcheck` — finds the gadget's hidraw node
 by USB IDs (pass `/dev/hidrawN` to override), drives the hid-nintendo-style
@@ -120,6 +136,23 @@ By hand, if you are at the bench: `sudo sweam trace start|snapshot|dump|stop`.
 Pair it with the `Report pump stalled for N ms` lines sweam logs when its own
 report stream gaps: together they separate "the host hung up on us" from
 "we went quiet".
+
+### Measuring who is slow, us or the host
+
+The trace answers this exactly, and it is the measurement that settled the
+report-rate question (PLAN.md, 2026-08-03). Clear the buffer, record a few
+seconds of steady play, then pair each `ep1in: Transfer In Progress` (the
+host took a report) with the `ep1in: cmd 'Update Transfer'` that follows it
+(we armed the next one):
+
+```sh
+sudo sh -c 'echo > /sys/kernel/debug/tracing/trace'
+sleep 3
+sudo cat /sys/kernel/debug/tracing/trace > /tmp/tr.txt
+```
+
+`done → queue` is our latency; `queue → done` is the host's polling
+interval. Anything but a tiny first number means the problem is ours.
 
 ## Caveats
 

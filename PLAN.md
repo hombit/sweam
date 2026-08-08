@@ -3,87 +3,68 @@
 Living roadmap — check items off as they complete, amend freely. Phases are
 ordered so every phase ends with something observable on real hardware.
 
-## ⚠ Current focus (2026-08-02): report timing, then gyro back on
+## ⚠ Current focus (2026-08-03): the pump is exonerated; gyro back on
 
-**Read this before touching the Switch side.** An entire session went into
-theorising about the protocol when the problem was *timing*. What settled it
-was one measurement. Measure first next time — the tooling below now exists
-precisely so you can.
+**Read this before touching the Switch side.** Three sessions in a row, the
+answer came from one measurement and none of the theorising. Measure first —
+the tooling below exists precisely so you can.
 
-### What the hardware actually says
+### What the hardware says (2026-08-03, live Switch session)
 
-- **Our report stream ran at half rate.** Gadget trace, 2026-08-02:
-  intervals between our outgoing reports were median **16.0 ms**, p90 17.0,
-  max 17.1, where a real Pro Controller streams at 8 ms.
-  **Correction, same day:** do *not* read "8–17 ms" as a disconnect
-  threshold — I did, and it is wrong. Those are hid-nintendo's
-  `JC_INPUT_REPORT_MIN_DELTA`/`MAX_DELTA`, and their only use in
-  `joycon_parse_report()` is to count `consecutive_valid_report_deltas`,
-  which gates *when the driver may send subcommands*. Out-of-range deltas
-  reset that counter; nothing disconnects, resets or warns. So bad timing
-  plausibly stalls the subcommand handshake, but "we exceeded 17 ms
-  therefore the host hung up" is unproven. With motion disabled the
-  report *bytes* were byte-for-byte identical to the July build that played
-  a full session, verified by diffing the report path.
-- **The 16 ms is the host's polling rate, and we cannot beat it.** Measured
-  after the deadline-pacing fix (`8316911`): median still **16.0 ms**, min
-  15.0, max 17.1 — unchanged. Ruled out on the way, so nobody re-checks:
-  `sleep(8 ms)` really costs 8.12 ms on this board (`CONFIG_HZ=250`,
-  `CONFIG_HIGH_RES_TIMERS=y`), and f_hid declares high-speed `bInterval = 4`
-  (1 ms), so the descriptor permits 16x faster polling than we observe.
-  A write to `/dev/hidg0` blocks until the transfer completes, i.e. until
-  the Switch polls, so the loop can never run faster than the host chooses.
-  Corroborated by feel: the right-pad camera decays once per pump iteration
-  and its behaviour did not change across the fix, which it would have if
-  the rate had doubled.
-- **Therefore timing may well be a red herring.** Half rate is not something
-  we can fix from the loop, and hid-nintendo does not disconnect over it
-  (see the correction above). `8316911` and `b34de32` are still defensible
-  — a deadline is more correct than sleep-then-block, and one writer beats
-  two threads fighting over one fd — but neither is proven to touch the
-  disconnects.
-- **Where `b34de32` actually landed**: gaps between drops of 30, 21, 26, 51,
-  21, 16 s (median ~24 s) across ~3 minutes of play. That is the *July
-  baseline* (`821e2c4` gave 23 s and 43 s), not an improvement on it. Read
-  it as: today's regression is fixed, the original problem is untouched.
-  Measure session length from the disconnect timestamps, not from a
-  `journalctl --since` window — a long idle gap between sessions otherwise
-  flatters the rate badly (it made me report "14 in 30 minutes" for what
-  was ~7 drops in 3 minutes).
-- **Next lead, if timing is dropped**: compare our descriptors against a
-  real Pro Controller's (speed, `bInterval`, endpoint layout). If the Switch
-  polls a genuine controller at 8 ms and us at 16, the difference is in what
-  we declare, and f_hid hardcodes it (there is a FIXME in the kernel saying
-  it could be configurable) — which would mean a patched module or a
-  different gadget mechanism.
-- Tempting story, still unproven: July's build hovered at 16 ms and dropped
-  every ~30 s, today's does more per iteration and dropped every few
-  seconds. It fits, but so would other explanations; the teardowns
-  themselves (`os error 108`) have never been traced to a cause. The 07-20 note claiming the MCU `0x21` disconnect was
-  "verified fixed" was optimistic — what that fix stopped was the *bursts*
-  of `0x21` retries, not the teardown.
+- **No disconnects, at all.** `journalctl -u sweam --since today | grep -cE
+  "Host disconnected|os error 108"` → **0**, across 24 boots and a played
+  session, confirmed from the couch too. Whatever July's drops were, they do
+  not reproduce on `cadf5ab` (full-speed enumeration + reference-matched
+  descriptors). Treat the disconnect hunt as closed until it recurs, and if
+  it does, get the trace before touching code.
+- **The 16 ms report period belongs to the host; the pump is not involved.**
+  Decomposing the gadget trace into "host consumed a report → we armed the
+  next" and "we armed it → the host came back":
 
-### State at the end of 2026-08-02
+  | | median | min | max |
+  |---|---|---|---|
+  | our loop, arming the next report | **0.09 ms** | 0.07 | 0.38 |
+  | waiting for the host's next poll | **15.84 ms** | 15.57 | 16.07 |
 
-Deployed: `cadf5ab`, gyro parked (`enabled "0"`), tracing armed. Awaiting one
-Switch session to say whether matching the reference descriptors fixed the
-drops.
+  A report is sitting on the endpoint 0.09 ms after every single poll. There
+  is nothing left in userspace to speed up.
+- **Why every pacing change so far was a no-op** — the thing to remember:
+  f_hid's `write()` blocks until the *previous* request completes and queues
+  the new one at that instant, so a `sleep()` before the write overlaps the
+  wait rather than adding to it. Tested directly, not reasoned: a build with
+  the pre-write sleep deleted measured **16.00 ms, exactly as with it** (and
+  armed 0.23 ms after each poll instead of 0.09, i.e. marginally worse). It
+  was reverted; only the comment in `main.rs` changed. This also retires the
+  "sleep-then-block doubles the period" story that `8316911` was built on.
+- **The board's own reboots are bench wiring, not a bug.** 24 boots today,
+  9–27 minutes apart, none with a clean-shutdown marker. The board is
+  bus-powered from the dock and a *sleeping* Switch cycles VBUS. The tell:
+  of those 24 boots only **3** ever reached `USB state: configured` — the
+  rest came up, found no host enumerating, and died again. From the couch
+  this is indistinguishable from a disconnect, and it poisoned earlier
+  sessions' data. Fix: power the Radxa from its GPIO 5 V pins and leave the
+  OTG port for data only.
+- **Re-enumeration costs a registration gesture.** Restarting the service
+  (or swapping binaries) drops the Switch to "Press L+R", and L+R alone is
+  not enough — it needs **A a couple of seconds later** to leave Change
+  Grip/Order. Verified end-to-end on 2026-08-03 with `sweam manual`: L+R
+  drew `0x48/0x21/0x30/0x22` out of the Switch, and after A the left stick
+  moved the home-menu cursor.
 
-Tonight's score, honestly: five changes aimed at the disconnects, none of
-which fixed them (`8316911` pacing, `b34de32` single writer, `dc1f351`
-remote wakeup — reverted, plus two instrumentation fixes). Two theories were
-falsified outright by reading sources: the 8-17 ms window is not a
-disconnect threshold, and a `0x21` reply does not replace a `0x30`. What
-did produce results was measuring — the gadget trace showed the teardown is
-Suspend → Reset, and the SN30 gave us reference descriptors. Reach for those
-two before reasoning about the protocol.
+### State at the end of 2026-08-03
 
-Everything comparable now matches the reference; the last known divergence
-is `bInterval` (reference 8, we publish 10 at full speed) and it is
-hardcoded per speed in f_hid, so userspace cannot reach 8. If the drops
-persist and the trace still shows Suspend → Reset, that is the next thread:
-patching f_hid, or another gadget mechanism that lets us set the endpoint
-interval.
+Deployed on the Radxa: still `cadf5ab` — today's only source change is a
+comment, so /opt/sweam was left alone. Gyro still parked (`enabled "0"`),
+tracing armed, desktop disabled (`multi-user.target` — GNOME was
+crash-looping a session every ~35 s on a 1 GB board).
+
+Score for the session, honestly: one code change attempted and reverted for
+doing nothing, which is the correct outcome for a theory that measurement
+killed. What it bought was three facts that stop future work going in
+circles — the host's 16 ms is the host's, f_hid writes overlap sleeps, and
+the board's reboots are the sleeping Switch. Everything comparable in the
+descriptors still matches the SN30 reference; the only known divergence left
+is `bInterval` (reference 8, we publish 10 at full speed).
 
 ### Reference descriptors (2026-08-02) — what the Switch accepts
 
@@ -94,59 +75,70 @@ had. Differences from what we present:
 
 | field | reference | ours | |
 |---|---|---|---|
-| `bcdUSB` | 2.00 | **2.01** | kernel overrides ours because the UDC is LPM-capable, so we advertise Link Power Management via BOS; the reference does not |
-| speed | full-speed | **high-speed** | `bInterval 8` on a full-speed device is 8 ms; ours is high-speed where f_hid uses `bInterval 4` (1 ms) |
-| `bcdHID` | 1.11 | **1.01** | f_hid hardcodes 1.01 |
+| speed | full-speed | full-speed | ✓ since `cadf5ab` (configfs `max_speed`, written before the UDC bind) |
+| `bcdUSB` | 2.00 | 2.00 | ✓ fell out of full speed — LPM is a high-speed feature, so the composite driver stopped bumping us to 2.01 |
+| `bInterval` (EP1) | 8 | **10** | **the last divergence.** f_hid hardcodes it per speed with a FIXME; measured consequence is the Switch polling us every 16.00 ms instead of 8 |
+| `bcdHID` | 1.11 | **1.01** | f_hid hardcodes 1.01; no observed consequence |
 | `bmAttributes` | 0xa0 (bus powered, remote wakeup) | 0xa0 | matched again — briefly 0x80, see below |
 | `MaxPower` | 500 mA | 500 mA | ✓ |
 | HID `wDescriptorLength` | 203 | 203 | ✓ our report descriptor length is right |
 | endpoints | EP1 IN + EP2 OUT, 64 B interrupt | same | ✓ |
 | IDs/strings | 057e:2009, Nintendo Co., Ltd. / Pro Controller / 000000000001 | identical | ✓ |
 
-**Speed and LPM are the substantive divergences**, and both are properties of
-the UDC rather than of anything in our code:
-- Full-speed vs high-speed: dwc3 takes `maximum-speed = "full-speed"` in the
-  device tree. Note f_hid's full-speed `bInterval` is 10, not the reference's
-  8 — hardcoded, with a FIXME in the kernel saying it should be configurable.
-- LPM: dwc3 takes `snps,usb2-lpm-disable`, which should also stop the
-  composite driver bumping `bcdUSB` to 0x0201.
-
-Both mean a device-tree overlay on the Radxa, not a code change.
+Everything we can reach from userspace now matches. `bInterval` is the one
+field left, and configfs does not expose it — hence the FunctionFS/patched
+f_hid item above. The device-tree route once planned for speed and LPM
+(`maximum-speed = "full-speed"`, `snps,usb2-lpm-disable`) turned out to be
+unnecessary: `max_speed` in configfs did both.
 
 ### Next, in order
 
-- [ ] **Verify the paced interval on the Switch** — `sudo sweam trace dump`
-      during play, then the intervals between `ep1in: cmd 'Update Transfer'`
-      timestamps. Expect ~8 ms. Everything below depends on this answer.
-- [ ] **If it floors at ~16 ms anyway, the limit is the host's poll rate**,
-      not our loop: check the interrupt endpoint's `bInterval` (f_hid picks
-      it; configfs does not expose it) against a real Pro Controller's. Then
-      the fix is the descriptor, not the pump.
-- [ ] **Drop the threads: one `poll()` loop over `/dev/hidg0`.** The two
-      threads exist only because reading the fd blocks; everything since —
-      three mutexes, a lock order, a reply queue (`b34de32`) — is scaffolding
-      holding that decision up, and it produced a measured 80 ms starvation
-      when the reader's blocking writes held the writer mutex through the
-      host's poll. A single loop with an 8 ms timeout services reads when
-      readable and writes on the deadline: no locks, no queue, starvation
-      impossible. Do this before adding anything else to the pump.
-      Note when doing it: `b34de32` made replies displace `0x30` reports on
-      the theory that a `0x21` carries input state and a real controller
-      sends one *instead of* the other. **That theory is unsupported** —
-      hid-nintendo takes button/stick state from `0x30` and treats `0x21`
-      as a synchronous reply — so the single loop should send both, just
-      without either blocking the other.
-- [ ] **Get logging out of the hot path.** The reader thread `println!`s per
-      subcommand into journald, which can block its writer under load — and
-      a blocked reader thread holds the protocol lock. More plausible as a
-      jitter source than anything scheduler-related.
-- [ ] **Only if deadlines are still missed**: `SCHED_FIFO` on the pump
-      thread, so an 8 ms deadline stops competing with GNOME and journald on
-      a 1 GB board.
-- [ ] **Then re-enable gyro**: `configs/touch-dpad.vdf` and `default.vdf`
-      currently carry `settings { "enabled" "0" }` on the gyro group, parked
-      for the bisect. Flip to `"1"`. Motion itself is verified working on
-      the controller side; only the Switch-side axis tuning remains.
+- [x] **Verify the paced interval on the Switch** (2026-08-03): 16.00 ms,
+      and the decomposition above proves it is the host's schedule, not our
+      loop. Method, for reuse: clear `/sys/kernel/debug/tracing/trace`, wait
+      a few seconds, then pair `ep1in: Transfer In Progress` (host consumed)
+      with the following `ep1in: cmd 'Update Transfer'` (we armed the next).
+- [ ] **Re-enable gyro** — the one open item with a user-visible payoff.
+      `configs/touch-dpad.vdf` and `default.vdf` carry `settings { "enabled"
+      "0" }` on the gyro group, parked for a bisect that has since been
+      resolved by other means. Flip to `"1"`. Motion is verified on the
+      controller side; only Switch-side axis tuning remains.
+- [ ] **A/B the right-pad modes** (phase 4 below): the relative stick landed
+      2026-08-03 and is staged on the board but has never been touched by a
+      human. One session decides which of the two survives.
+- [ ] **Power the Radxa from GPIO 5 V**, so a sleeping Switch stops
+      power-cycling the board mid-experiment (see above). Bench task, no
+      code, but it makes every future measurement trustworthy.
+- [ ] **8 ms polling, only if latency demands it.** It can now come from
+      exactly one place: the descriptor. f_hid hardcodes the full-speed
+      `bInterval` to 10 (with a FIXME in the kernel); the reference SN30
+      declares 8. Two routes — **FunctionFS** (`usb_f_fs.ko` is present on
+      the board) lets userspace supply the whole descriptor set, endpoints
+      included, at the cost of a second backend in `switch/gadget.rs` and
+      moving report I/O to the `ep` files; or build a patched `usb_f_hid`
+      out-of-tree the way `hid-steam` already was (TESTBED.md). **Have a
+      reason first**: no disconnects are outstanding, so the case for 8 ms
+      is ~8 ms of average input lag, not stability.
+
+### Retired by the 2026-08-03 measurement
+
+All three were aimed at a pump that arms its next report 0.09 ms after each
+poll, so none of them can buy anything. Do them as cleanup if at all, never
+as a disconnect theory:
+
+- ~~One `poll()` loop over `/dev/hidg0` instead of two threads.~~ Still a
+  defensible simplification — it deletes three mutexes, a lock order and the
+  reply queue, and it is the shape a no-std port would need (see the
+  appendix) — but the 80 ms starvation that motivated it was fixed by
+  `b34de32`, and nothing is starving now. Note if it is ever done:
+  `b34de32` made replies *displace* `0x30` reports on the theory that a real
+  controller sends one instead of the other. **That theory is unsupported**
+  — hid-nintendo reads state from `0x30` and treats `0x21` as a synchronous
+  reply — so a single loop should send both.
+- ~~Get logging out of the hot path.~~ The reader thread's per-subcommand
+  `println!` is not costing us reports; the pump's arming latency maxes at
+  0.38 ms.
+- ~~`SCHED_FIFO` on the pump thread.~~ No deadline is being missed.
 
 ### Do not repeat these
 
@@ -160,10 +152,20 @@ Both mean a device-tree overlay on the Radxa, not a code change.
   (2 s vs 23–43 s) and was reverted in `561400d`. `Protocol::set_elapsed`
   survives, unused, with the reasoning. Do not re-try without a trace
   explaining why it should be different.
-- **Blaming power**: the board really does lose power sometimes (see
-  Caveats), but the Switch-side drops are not that. Check
-  `journalctl -u sweam` for `Host disconnected (os error 108)` — that is the
-  host hanging up, and it is unrelated.
+- **Touching the report pump's pacing.** Sleep, deadline, no sleep at all —
+  all three measure 16.00 ms, because f_hid's write blocks on the previous
+  request and swallows whatever you did before it. Three commits have now
+  been spent here. The pump arms its next report 0.09 ms after each poll;
+  there is no headroom to reclaim.
+- **Confusing a board reboot with a Switch disconnect** — the trap that
+  wasted the most time. They look identical from the couch and different in
+  the journal: a host teardown says `Host disconnected (os error 108)`,
+  while a power cut leaves no shutdown marker at all and starts a fresh
+  boot. Separate them *first*, with
+  `journalctl -u sweam --since today | grep -c "Host disconnected"` versus
+  counting `Started sweam.service`. A sleeping Switch cycles VBUS on the
+  dock port and the board is bus-powered from it, so idle time against a
+  sleeping console manufactures "disconnects" by the dozen.
 
 ### Tooling that now exists for this
 
@@ -377,22 +379,30 @@ Implement `src/switch/protocol.rs` (see its doc comments and TODOs):
       quadrants (2026-07-19) — `settings { requires_click 0 }` on the
       left_trackpad group, example in configs/touch-dpad.vdf; deployed as
       the active config on the Radxa.
-- [ ] **Relative right-pad stick ("centre on touch")** — a third right-pad
-      mode: touch anywhere, drag, and the stick equals the vector dragged
-      from the touch origin; recentre on lift. No decay, no velocity, so no
-      lag and nothing to tune away. Proposed as `joystick_move` +
-      `settings { "center_on_touch" "1" }` rather than `joystick_camera`,
-      because the evidence that Valve calls this "Joystick Camera" is a
-      community forum post, not documentation (confirmed by the Steam Input
-      Essentials blog: plain Joystick Move keeps the centre at the *pad*
-      centre and is displacement-based).
-      Motivation: our `joystick_camera` is velocity-based with an
-      exponential decay, which trails the finger by the decay constant. Two
-      Switch sessions called it slow and laggy and it has already eaten a
-      sensitivity treadmill (4 → 12 → 24) plus the frozen-camera bug.
-      Plan: add opt-in, A/B against the velocity camera in one session,
-      then **delete whichever loses** — three right-pad modes is one too
-      many.
+- [x] **Relative right-pad stick ("centre on touch")** — implemented
+      2026-08-03 as `RightPadMode::RelativeStick`, selected by
+      `joystick_move` + `settings { "center_on_touch" "1" }` with the drag
+      gain as `settings { "scale" "N" }` (default 2.0 = full deflection
+      after dragging half the pad's radius). Spelled as a setting on
+      `joystick_move` rather than a mode name because the evidence that
+      Valve calls this "Joystick Camera" is a forum post, not documentation.
+      Shipped as `configs/relative-rightpad.vdf`, which is `touch-dpad.vdf`
+      with *only* the pad mode changed — a test asserts that, so the A/B
+      compares one variable.
+      What forced it: the velocity camera cannot sustain a turn. Measured
+      2026-08-03 at the pump's real 16 ms tick, its deflection peaks at the
+      same 85% of full scale for every swipe speed and is *identical* at
+      sensitivity 24 and 72 — it saturates on the first sample, so the
+      4 → 12 → 24 treadmill was always going to come back "still too slow".
+      The stick deflects only while the finger moves, so one swipe turns you
+      exactly as far as that swipe's travel.
+- [ ] **A/B the two right-pad modes in one session, then delete the loser**
+      — three modes is one too many. Both are staged on the Radxa:
+      `sudo ~/sweam install --config ~/configs/relative-rightpad.vdf --trace`
+      switches to the new one, the same command with `touch-dpad.vdf` goes
+      back. Judge it on sustained turning (can you complete a 180° without
+      lifting?) and on aim precision, and tune `scale` before concluding —
+      unlike the camera's `sensitivity`, it genuinely moves the output.
 - [ ] Investigate importing real Steam controller configs (the client's
       exported VDF layouts) for the subset that binds to gamepad outputs.
 - [x] Controller hotplug in bridge mode (2026-07-19): `sweam steam` now

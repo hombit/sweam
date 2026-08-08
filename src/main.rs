@@ -267,12 +267,18 @@ fn main() -> anyhow::Result<()> {
     let mut worst_gap = Duration::ZERO;
     let mut next_report = std::time::Instant::now();
     while RUNNING.load(Ordering::SeqCst) {
-        // Pace against a fixed deadline, not "sleep 8 ms then work". The
-        // write below blocks until the host polls the interrupt endpoint —
-        // about 8 ms — so sleeping a further 8 ms after it doubled the
-        // period to a measured median of 16 ms, with 5% of reports past the
-        // 17 ms the host tolerates (gadget trace, 2026-08-02). That is the
-        // disconnect: the stream is late, not wrong.
+        // Pace against a fixed deadline, not "sleep 8 ms then work" — though
+        // measurement says this loop is not what sets the rate, and the
+        // sleep costs nothing either way. Gadget trace against the Switch,
+        // 2026-08-03: the next report is armed on the endpoint a median
+        // 0.09 ms after the host consumed the previous one, and the host
+        // then takes 15.84 ms to poll again. f_hid's write blocks until the
+        // *previous* request completes and queues the new one at that
+        // instant, so any sleep here overlaps the wait instead of adding to
+        // it — removing it entirely changed the period by nothing (16.00 ms
+        // either way). The 16 ms is the host's schedule for our endpoint;
+        // only the descriptor can move it (see PLAN.md: f_hid hardcodes
+        // bInterval 10 at full speed, the real controller declares 8).
         next_report += REPORT_INTERVAL;
         match next_report.checked_duration_since(std::time::Instant::now()) {
             Some(delay) => std::thread::sleep(delay),
