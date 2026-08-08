@@ -3,3 +3,4 @@
 pub mod gadget;
 pub mod protocol;
 pub mod report;
+pub mod rumble;

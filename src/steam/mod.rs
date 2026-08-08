@@ -17,6 +17,7 @@
 //! Dongle USB IDs: 28de:1142 (wired controller: 28de:1102).
 
 pub mod config;
+pub mod haptic;
 pub mod mapping;
 pub mod packet;
 
@@ -36,12 +37,21 @@ pub use hidraw::HidrawSteamController;
 
 /// Open the controller. `hidraw` pins a specific `/dev/hidrawN`; without it
 /// every dongle slot is opened and the one that delivers packets wins.
+///
+/// `rumble`, when given, also starts the haptics worker: whatever the Switch
+/// posts to that mailbox gets played on the controller's actuators. Bench
+/// tools that only read inputs pass `None` and leave the pads alone.
 #[cfg(target_os = "linux")]
 pub fn open_source(
     mapping: mapping::Mapping,
     hidraw: Option<&str>,
+    rumble: Option<std::sync::Arc<crate::switch::rumble::RumbleMailbox>>,
 ) -> anyhow::Result<Box<dyn InputSource>> {
-    Ok(Box::new(HidrawSteamController::open(mapping, hidraw)?))
+    let mut source = HidrawSteamController::open(mapping, hidraw)?;
+    if let Some(mailbox) = rumble {
+        source.start_haptics(mailbox)?;
+    }
+    Ok(Box::new(source))
 }
 
 /// Whether an error from [`HidrawSteamController::open`] is a permission

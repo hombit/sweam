@@ -147,6 +147,13 @@ pub struct Protocol {
     /// and how many times it repeated without being printed.
     last_raw: Vec<u8>,
     last_raw_repeats: u32,
+    /// Where decoded rumble goes, if anyone is listening. `None` in the
+    /// tests and in any mode with no controller to play it on.
+    rumble: Option<std::sync::Arc<super::rumble::RumbleMailbox>>,
+    /// Whether the host has enabled vibration (subcommand 0x48). A real
+    /// controller ignores rumble data until told to; so do we, rather than
+    /// buzzing on whatever the host happens to leave in the field.
+    vibration_enabled: bool,
 }
 
 impl Protocol {
@@ -155,6 +162,12 @@ impl Protocol {
             imu_allowed: true,
             ..Self::default()
         }
+    }
+
+    /// Where to post rumble the host asks for. Without this the rumble
+    /// bytes are decoded by nobody and the actuators never move.
+    pub fn set_rumble_mailbox(&mut self, mailbox: std::sync::Arc<super::rumble::RumbleMailbox>) {
+        self.rumble = Some(mailbox);
     }
 
     /// Whether this layout forwards motion at all; see [`Self::imu_allowed`].
@@ -185,11 +198,15 @@ impl Protocol {
                 self.last_raw = data.to_vec();
             }
         }
+        // Both report kinds carry rumble in the same place, whether or not
+        // they carry anything else — a 0x10 is exactly a 0x01 with no
+        // subcommand attached.
+        self.take_rumble(data);
         match data.first() {
             Some(0x80) if data.len() >= 2 => self.handle_usb_command(data[1]),
             // Subcommand: bytes 1..10 are packet counter + rumble data.
             Some(0x01) if data.len() >= 11 => self.handle_subcommand(data[10], &data[11..], state),
-            // Rumble-only report: no reply. TODO(phase 5): forward to haptics.
+            // Rumble-only report: nothing to reply to.
             Some(0x10) => vec![],
             Some(_) | None => {
                 if self.streaming {
@@ -198,6 +215,30 @@ impl Protocol {
                 vec![]
             }
         }
+    }
+
+    /// Decode the rumble an output report carries and post it for the
+    /// haptics side.
+    ///
+    /// Byte 1 is a packet counter and bytes 2..10 are the rumble data: four
+    /// bytes for the left actuator, four for the right. That holds for both
+    /// `0x01` (subcommand) and `0x10` (rumble-only) reports, which is why
+    /// this runs before the dispatch below rather than inside either arm.
+    fn take_rumble(&mut self, data: &[u8]) {
+        let Some(mailbox) = &self.rumble else {
+            return;
+        };
+        // Ignore rumble until the host has switched vibration on, as a real
+        // controller does. Without this, whatever bytes happen to sit in the
+        // field during the handshake would buzz the pads.
+        if !self.vibration_enabled {
+            return;
+        }
+        if !matches!(data.first(), Some(0x01 | 0x10)) || data.len() < 10 {
+            return;
+        }
+        let bytes: [u8; 8] = data[2..10].try_into().expect("checked the length");
+        mailbox.set(super::rumble::RumbleFrame::decode(&bytes));
     }
 
     /// If the last raw-logged report repeated silently, say how many times.
@@ -343,10 +384,33 @@ impl Protocol {
                 );
                 (0x80, vec![])
             }
+            // Vibration enable/disable: acked like the others, but the
+            // argument matters — it gates whether we act on the rumble
+            // bytes at all (see `take_rumble`).
+            0x48 => {
+                self.vibration_enabled = args.first().is_some_and(|&arg| arg != 0);
+                println!(
+                    "Host {} vibration",
+                    if self.vibration_enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                );
+                // Disabling must actively silence, not just stop updating:
+                // otherwise the last frame stays posted and the actuators
+                // keep being re-armed from it forever.
+                if !self.vibration_enabled
+                    && let Some(mailbox) = &self.rumble
+                {
+                    mailbox.set(super::rumble::RumbleFrame::SILENT);
+                }
+                (0x80, vec![])
+            }
             // Plain acks: low power (0x08), set MCU state (0x22), player
-            // lights (0x30), home light (0x38), vibration enable (0x48),
-            // and — to stay permissive — anything we don't know.
-            0x08 | 0x22 | 0x30 | 0x38 | 0x48 => (0x80, vec![]),
+            // lights (0x30), home light (0x38), and — to stay permissive —
+            // anything we don't know.
+            0x08 | 0x22 | 0x30 | 0x38 => (0x80, vec![]),
             _ => {
                 eprintln!("Generic ack for unhandled subcommand: {subcommand:#04X} {args:02X?}");
                 (0x80, vec![])
@@ -388,6 +452,7 @@ fn usb_response(command: u8, payload: &[u8]) -> Report {
 mod tests {
     use super::*;
     use crate::state::Button;
+    use crate::switch::rumble::RumbleFrame;
 
     /// Pad an output report to the 64 bytes the host actually sends.
     fn out(bytes: &[u8]) -> Vec<u8> {
@@ -586,6 +651,84 @@ mod tests {
         let mut frame = vec![0x10, 0x00];
         frame.extend_from_slice(&[0; 8]);
         assert!(handle(&mut p, &out(&frame)).is_empty());
+    }
+
+    /// A rumble frame with something in it, for the tests below: full-scale
+    /// low band on the left side, silence on the right.
+    fn loud_left() -> [u8; 8] {
+        [0x00, 0x01, 0x64, 0x72, 0x00, 0x01, 0x40, 0x40]
+    }
+
+    fn rumble_report(data: &[u8; 8]) -> Vec<u8> {
+        let mut frame = vec![0x10, 0x00];
+        frame.extend_from_slice(data);
+        out(&frame)
+    }
+
+    #[test]
+    fn rumble_reaches_the_mailbox_once_vibration_is_enabled() {
+        let mailbox = std::sync::Arc::new(super::super::rumble::RumbleMailbox::default());
+        let mut p = Protocol::new();
+        p.set_rumble_mailbox(mailbox.clone());
+
+        // Before subcommand 0x48 the host's rumble bytes are ignored, the
+        // way a real controller ignores them.
+        handle(&mut p, &rumble_report(&loud_left()));
+        assert_eq!(mailbox.get(), None, "buzzed before vibration was enabled");
+
+        handle(&mut p, &subcmd(0x48, &[0x01]));
+        handle(&mut p, &rumble_report(&loud_left()));
+        let frame = mailbox.get().expect("rumble should have been posted");
+        assert!(frame.left.amplitude() > 0.5, "{frame:?}");
+        assert_eq!(frame.right.amplitude(), 0.0);
+
+        // Turning vibration off must silence the actuators, not merely
+        // stop updating them — a stale loud frame would be re-armed forever.
+        handle(&mut p, &subcmd(0x48, &[0x00]));
+        assert_eq!(mailbox.get(), Some(RumbleFrame::SILENT));
+        handle(&mut p, &rumble_report(&[0xFF; 8]));
+        assert_eq!(
+            mailbox.get(),
+            Some(RumbleFrame::SILENT),
+            "kept updating after disable"
+        );
+    }
+
+    /// Subcommand reports carry rumble in the same bytes as rumble-only
+    /// ones, so a 0x01 must feed the mailbox too.
+    #[test]
+    fn subcommand_reports_also_carry_rumble() {
+        let mailbox = std::sync::Arc::new(super::super::rumble::RumbleMailbox::default());
+        let mut p = Protocol::new();
+        p.set_rumble_mailbox(mailbox.clone());
+        handle(&mut p, &subcmd(0x48, &[0x01]));
+
+        let mut report = vec![0x01, 0x00];
+        report.extend_from_slice(&loud_left());
+        report.push(0x30); // player lights, an ordinary subcommand
+        report.push(0x01);
+        let replies = handle(&mut p, &out(&report));
+        assert_eq!(replies.len(), 1, "the subcommand still gets its ack");
+        assert!(mailbox.get().is_some_and(|f| f.left.amplitude() > 0.5));
+    }
+
+    /// The mailbox is optional; nothing may panic without one.
+    #[test]
+    fn rumble_without_a_mailbox_is_harmless() {
+        let mut p = Protocol::new();
+        handle(&mut p, &subcmd(0x48, &[0x01]));
+        assert!(handle(&mut p, &rumble_report(&loud_left())).is_empty());
+    }
+
+    /// A truncated report must not panic on the rumble slice.
+    #[test]
+    fn short_rumble_reports_are_ignored() {
+        let mailbox = std::sync::Arc::new(super::super::rumble::RumbleMailbox::default());
+        let mut p = Protocol::new();
+        p.set_rumble_mailbox(mailbox.clone());
+        handle(&mut p, &subcmd(0x48, &[0x01]));
+        handle(&mut p, &[0x10, 0x00, 0x01, 0x02]);
+        assert_eq!(mailbox.get(), None);
     }
 
     #[test]

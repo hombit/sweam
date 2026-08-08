@@ -31,7 +31,11 @@ pub fn run(
         let mut controller = {
             let mut waiting = false;
             loop {
-                match crate::steam::open_source(mapping.clone(), input.hidraw_device.as_deref()) {
+                match crate::steam::open_source(
+                    mapping.clone(),
+                    input.hidraw_device.as_deref(),
+                    None,
+                ) {
                     Ok(controller) => break controller,
                     // Waiting can't fix missing permissions — exit instead.
                     Err(err) if crate::steam::is_permission_error(&err) => return Err(err),

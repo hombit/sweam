@@ -7,6 +7,7 @@
 // everything would warn; keep dead-code analysis active for the real target.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
+mod buzz;
 mod cli;
 mod hostcheck;
 mod install;
@@ -80,6 +81,7 @@ fn main() -> anyhow::Result<()> {
             let mapping = load_mapping(input.config.as_deref())?;
             return steamcheck::run(mapping, &input);
         }
+        cli::Command::Buzz { opts } => return buzz::run(&opts),
         cli::Command::Steam { input, gadget } => (input, gadget, false),
         cli::Command::Manual { gadget } => (cli::InputOpts::default(), gadget, true),
     };
@@ -175,11 +177,24 @@ fn main() -> anyhow::Result<()> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .set_imu_allowed(forwards_motion);
 
+    // Rumble: the reader thread decodes what the host asks for into this
+    // mailbox, and the controller's haptics worker plays it. Created even in
+    // manual mode, where nothing reads it — one less conditional.
+    let rumble = Arc::new(switch::rumble::RumbleMailbox::default());
+    protocol
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .set_rumble_mailbox(rumble.clone());
+
     let open_controller = || -> anyhow::Result<Option<Box<dyn steam::InputSource>>> {
         let Some(mapping) = mapping.clone() else {
             return Ok(None);
         };
-        match steam::open_source(mapping, input_args.hidraw_device.as_deref()) {
+        match steam::open_source(
+            mapping,
+            input_args.hidraw_device.as_deref(),
+            Some(rumble.clone()),
+        ) {
             Ok(controller) => Ok(Some(controller)),
             // Retrying can't fix permissions — fail the whole bridge.
             Err(err) if steam::is_permission_error(&err) => Err(err),

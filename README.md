@@ -95,6 +95,10 @@ off by default, and without it the Switch ignores USB controllers.
 - `sudo sweam steamcheck` — no gadget: prints every parsed controller input
   (with the active mapping applied) so you can check buttons and sticks.
   Needs root: it reads the controller's raw HID nodes, motion included.
+- `sudo sweam buzz` — no gadget, no Switch: fires the controller's haptic
+  actuators directly, with amplitude, pulse period and duration all on the
+  command line (`--amplitude`, `--period-us`, `--seconds`, `--side`). The
+  way to find out what the pads can actually do.
 - `sudo sweam hostcheck [/dev/hidrawN]` — run this **on a second Linux
   machine** connected to the SBC's OTG port: it performs the same USB
   handshake a Switch does and prints every decoded input it receives.
@@ -153,6 +157,31 @@ and both gyro and accelerometer decode correctly over the wireless dongle.
 What is **not** yet settled is the Switch side — the IMU axis order and
 signs are passed through unchanged, and matching them to what the Switch
 expects needs testing against a real console. See PLAN.md phase 6.
+
+### Rumble — experimental, unverified
+
+The Switch's rumble is forwarded to the controller's haptic actuators. It
+needs nothing in the config: the console enables vibration during the
+handshake, and from then on every output report it sends carries rumble that
+sweam decodes and replays.
+
+Temper your expectations. The Steam Controller has no rumble motors — it has
+a *piezo* transducer under each trackpad, the thing that clicks. Vibration is
+a fast train of those clicks, so it buzzes where a Pro Controller thumps.
+Worse, Switch rumble is two frequency bands per side and one piezo can only
+play one thing at a time, so sweam plays the louder band and drops the other.
+
+**None of this is verified on hardware yet** — in particular
+`FULL_SCALE_AMPLITUDE` in `src/steam/haptic.rs`, which decides how hard a
+full-strength rumble drives the actuator, is currently a guess. Calibrate it:
+
+```sh
+sudo sweam buzz --amplitude 32768      # the current default
+sudo sweam buzz --amplitude 4096       # quieter, if that is a shriek
+sudo sweam buzz --period-us 2000       # higher pitch (500 Hz)
+```
+
+Whatever feels right is the number to put in that constant.
 
 ## Custom button mappings
 

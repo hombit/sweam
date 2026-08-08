@@ -62,6 +62,12 @@ echo "press a" > /tmp/sweam.fifo    # inject from any later ssh call
   pattern matches the shell running your own command and kills the session.
   Use the PID from `pgrep`, or `pkill -x sweam`.
 
+**Haptics, without a Switch:** `sudo ./sweam buzz` on the Radxa. The
+controller must be *on* — the command warns and blind-fires every dongle slot
+otherwise, which is silent if the controller is asleep. Safe to run while the
+service is up: hidraw allows a second opener, and buzz only reads packets for
+two seconds to learn which slot to address.
+
 Host side (RPi3): `sudo ./sweam hostcheck` — finds the gadget's hidraw node
 by USB IDs (pass `/dev/hidrawN` to override), drives the hid-nintendo-style
 USB handshake and prints every decoded button/stick change from the 0x30

@@ -79,6 +79,11 @@ pub enum Command {
         #[command(flatten)]
         input: InputOpts,
     },
+    /// buzz the Steam Controller's haptics (needs root)
+    Buzz {
+        #[command(flatten)]
+        opts: BuzzOpts,
+    },
     /// verify a sweam gadget from the USB host side
     Hostcheck {
         /// its hidraw node; default: detected by USB IDs among /dev/hidraw*
@@ -131,6 +136,47 @@ pub struct InputOpts {
     /// and whichever delivers packets wins (a wired controller likewise)
     #[arg(long, value_name = "PATH")]
     pub hidraw_device: Option<String>,
+}
+
+/// Which actuator `sweam buzz` should drive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum BuzzSide {
+    Left,
+    Right,
+}
+
+/// `sweam buzz`: every field of the haptic command, so the useful values can
+/// be found by feel. Defaults are a middling buzz on both pads.
+#[derive(Debug, Args, PartialEq)]
+pub struct BuzzOpts {
+    /// which pad; default: both, one after the other
+    #[arg(long, value_enum)]
+    pub side: Option<BuzzSide>,
+    /// pulse strength, 0..65535. Start here when nothing is felt
+    #[arg(long, default_value_t = crate::steam::haptic::FULL_SCALE_AMPLITUDE)]
+    pub amplitude: u16,
+    /// pulse period in microseconds; 1/period is the pitch (default 6250 µs
+    /// = 160 Hz, the frequency the Switch idles its low rumble band at)
+    #[arg(long, value_name = "US", default_value_t = 6250)]
+    pub period_us: u16,
+    /// how long the burst should last
+    #[arg(long, value_name = "S", default_value_t = 0.5)]
+    pub seconds: f32,
+    /// the controller's /dev/hidrawN; default: every dongle slot
+    #[arg(long, value_name = "PATH")]
+    pub device: Option<String>,
+}
+
+impl Default for BuzzOpts {
+    fn default() -> Self {
+        Self {
+            side: None,
+            amplitude: crate::steam::haptic::FULL_SCALE_AMPLITUDE,
+            period_us: 6250,
+            seconds: 0.5,
+            device: None,
+        }
+    }
 }
 
 /// Gadget-side options shared by `steam` and `manual`.

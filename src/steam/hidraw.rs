@@ -16,13 +16,18 @@
 //! hid-steam restores lizard mode and re-registers evdev. (See `Notes.md`,
 //! "Steam Controller IMU over hidraw".)
 
+use super::haptic::{HapticPulse, Side};
 use super::{ControllerState, InputSource, mapping, packet};
+use crate::switch::rumble::RumbleMailbox;
 use anyhow::{Context, bail};
 use std::fs::{File, OpenOptions};
 use std::io::Read;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::Duration;
 
 const STEAM_VENDOR_ID: u16 = 0x28DE;
 const DONGLE_PRODUCT_ID: u16 = 0x1142;
@@ -63,6 +68,37 @@ const IMU_MODE_ALL: u16 = 0x04 | 0x08 | 0x10;
 const SETTINGS_RETRIES: u32 = 3;
 const SETTINGS_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(20);
 
+/// Sentinel for [`HidrawSteamController::active_shared`]: no slot has
+/// identified itself yet.
+const NO_ACTIVE_SLOT: usize = usize::MAX;
+
+/// How often the haptics worker re-arms the actuators.
+///
+/// The actuators play a *finite* burst and stop, so sustaining a rumble
+/// means re-sending. 40 ms is a compromise between two costs: each re-arm is
+/// a USB control transfer to the dongle, and everything between the host's
+/// rumble changing and the next tick is latency the player feels. It is also
+/// deliberately slower than the host's ~66 rumble updates a second — those
+/// restate a level, so dropping most of them loses nothing.
+const HAPTIC_TICK: Duration = Duration::from_millis(40);
+
+/// How long each burst is asked to last.
+///
+/// Longer than the tick, so consecutive bursts overlap rather than leaving
+/// audible gaps if a tick runs late. The overhang is the price: when rumble
+/// stops, whatever is already playing finishes, so the pads keep buzzing for
+/// up to `HAPTIC_BURST - HAPTIC_TICK` after silence.
+const HAPTIC_BURST: Duration = Duration::from_millis(50);
+
+/// How long a posted rumble frame stays worth playing.
+///
+/// The host restates rumble in every output report, so anything older than a
+/// few ticks means the host stopped talking rather than asked for silence —
+/// see [`RumbleMailbox::get_fresh`]. Generous enough to survive a hiccup in
+/// the host's stream, short enough that nobody has to power-cycle a
+/// controller that got stuck buzzing.
+const RUMBLE_TTL: Duration = Duration::from_millis(250);
+
 /// One dongle slot (or a wired controller): a node we hold open and read.
 struct Slot {
     path: PathBuf,
@@ -81,6 +117,13 @@ pub struct HidrawSteamController {
     slots: Vec<Slot>,
     /// Index into `slots` of the one that has produced input packets.
     active: Option<usize>,
+    /// The same index, shared with the haptics worker so it can address the
+    /// controller without reaching into `self` across threads.
+    /// [`NO_ACTIVE_SLOT`] until a slot identifies itself.
+    active_shared: Arc<AtomicUsize>,
+    /// Stops the haptics worker when this source is dropped — which happens
+    /// on every reconnect, since the bridge reopens the controller.
+    haptics_stop: Option<Arc<AtomicBool>>,
     mapping: mapping::Mapping,
     /// Kept so a wireless reconnect can re-apply it: the controller forgets
     /// its settings (IMU mode included) when it drops off and comes back.
@@ -149,10 +192,101 @@ impl HidrawSteamController {
         Ok(Self {
             slots,
             active: None,
+            active_shared: Arc::new(AtomicUsize::new(NO_ACTIVE_SLOT)),
+            haptics_stop: None,
             mapping,
             imu_mode,
             last_battery: None,
         })
+    }
+
+    /// Start playing whatever rumble the host posts to `mailbox` on the
+    /// controller's actuators.
+    ///
+    /// The work happens on its own thread, and that is the whole point.
+    /// Sending a burst is a USB control transfer to the dongle; doing it
+    /// from the report pump would put an unpredictable stall between the
+    /// host's poll and our next report, on the one axis this project has
+    /// already lost three sessions to. Here the worst case is a late buzz.
+    ///
+    /// The thread holds its own duplicated descriptors, so it keeps working
+    /// regardless of what the pump is doing, and stops when this source is
+    /// dropped (i.e. on every reconnect, when the bridge reopens).
+    pub fn start_haptics(&mut self, mailbox: Arc<RumbleMailbox>) -> anyhow::Result<()> {
+        let mut devices = Vec::with_capacity(self.slots.len());
+        for slot in &self.slots {
+            devices.push(
+                slot.device
+                    .try_clone()
+                    .with_context(|| format!("Failed to duplicate {:?}", slot.path))?,
+            );
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        self.haptics_stop = Some(stop.clone());
+        let active = self.active_shared.clone();
+        std::thread::spawn(move || {
+            // Only re-arm when something is actually asked for. Silence is
+            // not a command we can send — a burst already playing runs to
+            // its end — so it simply means sending nothing.
+            while !stop.load(Ordering::Relaxed) {
+                std::thread::sleep(HAPTIC_TICK);
+                let Some(frame) = mailbox.get_fresh(RUMBLE_TTL) else {
+                    continue;
+                };
+                if frame.is_silent() {
+                    continue;
+                }
+                let target = active.load(Ordering::Relaxed);
+                for (side, rumble) in [(Side::Left, frame.left), (Side::Right, frame.right)] {
+                    let Some(pulse) = HapticPulse::from_band(side, rumble.dominant(), HAPTIC_BURST)
+                    else {
+                        continue;
+                    };
+                    let report = pulse.feature_report();
+                    // Before a slot identifies itself there is nothing
+                    // sensible to address, and blind-firing at four slots
+                    // 25 times a second is not it — buzz only once we know.
+                    if let Some(device) = devices.get(target) {
+                        let _ = set_feature(device, &report);
+                    }
+                }
+            }
+        });
+        Ok(())
+    }
+
+    /// Whether a slot has actually delivered packets, i.e. a controller is
+    /// on and talking. Until then we do not know which slot to address.
+    pub fn is_streaming(&self) -> bool {
+        self.active.is_some()
+    }
+
+    /// Fire one haptic burst at the controller.
+    ///
+    /// Before any slot has identified itself the command goes to all of
+    /// them: the dongle acks for empty slots regardless (see the struct
+    /// docs), so there is no cheaper way to reach a controller whose slot we
+    /// have not learned yet, and the ones that miss cost an ioctl each.
+    pub fn send_haptic(&self, pulse: &super::haptic::HapticPulse) -> anyhow::Result<()> {
+        let report = pulse.feature_report();
+        let targets: Vec<usize> = match self.active {
+            Some(index) => vec![index],
+            None => (0..self.slots.len()).collect(),
+        };
+        let mut last_error = None;
+        for index in targets {
+            if let Err(err) = set_feature(&self.slots[index].device, &report) {
+                last_error = Some((self.slots[index].path.clone(), err));
+            }
+        }
+        match last_error {
+            // A failure on one speculative slot is not a failure overall;
+            // only report when we knew the target and it refused.
+            Some((path, err)) if self.active.is_some() => {
+                Err(anyhow::Error::new(err).context(format!("Haptic report rejected by {path:?}")))
+            }
+            _ => Ok(()),
+        }
     }
 
     /// Re-apply settings to one slot after a wireless reconnect; a failure
@@ -165,6 +299,16 @@ impl HidrawSteamController {
                 "Steam Controller reconnected but re-enabling motion failed: {err:#} ({})",
                 slot.path.display()
             );
+        }
+    }
+}
+
+impl Drop for HidrawSteamController {
+    fn drop(&mut self) {
+        // The worker holds duplicated descriptors, so it would happily keep
+        // buzzing a controller this source no longer owns.
+        if let Some(stop) = &self.haptics_stop {
+            stop.store(true, Ordering::Relaxed);
         }
     }
 }
@@ -197,6 +341,7 @@ impl HidrawSteamController {
                         // controller, and worth saying out loud.
                         if self.active != Some(index) {
                             self.active = Some(index);
+                            self.active_shared.store(index, Ordering::Relaxed);
                             println!(
                                 "Steam Controller streaming on {}",
                                 self.slots[index].path.display()

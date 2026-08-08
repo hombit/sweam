@@ -420,19 +420,33 @@ Implement `src/switch/protocol.rs` (see its doc comments and TODOs):
 
 ## Phase 5 — rumble forwarding
 
-- [ ] Parse HD rumble data from `0x10`/`0x01` output reports (frequency +
-      amplitude encoding in dekuNukem notes).
-- [ ] Drive Steam Controller haptic actuators via raw hidraw feature reports.
-      The input side of this is already done — since 2026-08-08 the bridge
-      reads raw HID unconditionally, so the device is ours and lizard mode
-      is already disabled; only the actuator feature-report shape is still
-      unknown. (Checked: the old `hid_main.rs` experiment in git history,
-      `ad31488^`, has no haptic code — this has to come from the community
-      docs or from watching what Steam sends.)
-- [ ] Prerequisite, cheap: log the `0x10` payloads instead of dropping them
-      at `protocol.rs`, and confirm from a real game that the Switch is
-      sending rumble at all. Note `0x48` (enable vibration) is already ACKed,
-      so the console believes vibration works.
+- [x] Parse HD rumble data from `0x10`/`0x01` output reports (2026-08-08,
+      `switch/rumble.rs`): both report kinds carry 8 bytes at the same
+      offset, decoded into two bands per side (Hz + 0..1 amplitude) per
+      dekuNukem `rumble_data_table.md`. Gated on subcommand `0x48`, which is
+      now acted on rather than blindly acked; disabling actively posts
+      silence. The neutral frame `00 01 40 40` decoding to zero amplitude is
+      the self-check that the arithmetic is right, and is a test.
+- [x] Drive Steam Controller haptic actuators via raw hidraw feature reports
+      (2026-08-08, `steam/haptic.rs`): report `0x8f`, `<BBBHHH` = id, len
+      0x07, side, amplitude, period µs, count — from ynsta/steamcontroller
+      (MIT). The actuators are piezo and play a *finite* burst, so sustained
+      rumble means re-arming: a worker thread inside `hidraw.rs` re-sends
+      every 40 ms with 50 ms bursts, deliberately **not** on the report pump,
+      because each send is a USB control transfer and that is the one axis
+      this project keeps losing sessions to.
+- [ ] **Verify by feel — the only open part, and no test can do it.**
+      `sudo sweam buzz` fires the actuators directly with every field on the
+      command line. Two questions: does a burst get felt at all, and what
+      amplitude is pleasant? Whatever that turns out to be belongs in
+      `haptic::FULL_SCALE_AMPLITUDE` (currently 0x8000, a guess — ynsta's own
+      default is 128 out of 65535, so the useful scale is unknown to within
+      two orders of magnitude). Try `--amplitude`, then `--period-us`
+      (1000..20000).
+- [ ] Then in a game: confirm the Switch actually sends rumble (the journal
+      now says "Host enabled vibration"), and judge whether one piezo per
+      side can express two-band HD rumble at all. `SideRumble::dominant`
+      currently just plays the louder band.
 
 ## Phase 6 — gyro passthrough
 

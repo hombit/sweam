@@ -25,7 +25,7 @@ SSH addresses and bench wiring: see `TESTBED.md`.
 
 ```
 src/main.rs            gadget/protocol wire-up + signal-safe shutdown
-src/cli.rs             CLI: steam | manual | steamcheck | hostcheck |
+src/cli.rs             CLI: steam | manual | steamcheck | buzz | hostcheck |
                        install | uninstall; detect everything, override
                        anything (--udc --configfs --skip-modprobe --config
                        --hidraw-device --prefix)
@@ -34,6 +34,9 @@ src/install.rs         `sweam install/uninstall`: /opt/sweam + systemd unit
 src/state.rs           ControllerState/Button — shared intermediate representation
 src/manual.rs          `sweam manual`: Pro Controller inputs typed on stdin (testing)
 src/steamcheck.rs      `sweam steamcheck`: print parsed Steam Controller inputs
+src/buzz.rs            `sweam buzz`: fire the haptics directly, every field on
+                       the command line — the only way to settle by feel what
+                       the actuators do (see steam/haptic.rs)
 src/hostcheck.rs       `sweam hostcheck`: run on the USB host — handshake over
                        hidraw + decode the 0x30 stream (hid-nintendo stand-in)
 src/vdf.rs             minimal Valve KeyValues (VDF) parser
@@ -42,11 +45,15 @@ src/steam/             input side: InputSource trait, one implementation —
                        haptics; takes the device over from hid-steam, so it
                        needs root). packet.rs decodes raw 64-byte packets
                        into the evdev codes mapping.rs speaks; mapping.rs
-                       layout + config.rs Steam-style VDF configs
+                       layout + config.rs Steam-style VDF configs;
+                       haptic.rs the 0x8f actuator command, played by a
+                       worker thread hidraw.rs owns (never the report pump)
 src/switch/gadget.rs   configfs USB gadget (057e:2009), teardown on Drop,
                        stale-gadget cleanup at startup
 src/switch/report.rs   real Pro Controller HID descriptor + 0x30 report packing
 src/switch/protocol.rs handshake/subcommand state machine (0x80 → 0x21 → stream 0x30)
+src/switch/rumble.rs   decode the host's HD rumble + the mailbox carrying it
+                       to the haptics worker
 configs/               example mapping configs (default, face-labels,
                        swapped-sticks, touch-dpad, no-gyro, and the three
                        right-pad flavours: absolute-rightpad,
