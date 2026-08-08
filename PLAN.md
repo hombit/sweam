@@ -450,9 +450,9 @@ Implement `src/switch/protocol.rs` (see its doc comments and TODOs):
       loudness is duty. Full write-up in Notes.md.
 - [ ] **Establish an idle disconnect baseline, then retest haptics against
       it.** Sustained bursts at ~50% duty appeared to knock the controller
-      off three times in three minutes — but it then dropped three more
-      times with nothing playing, so the correlation is unproven and the
-      first round of measurement was worthless for want of a control.
+      off three times in three minutes — but three drops with no control
+      condition is not a result, and a later cluster that looked like
+      counter-evidence was just the controller being switched off by hand.
       Count drops over ten idle minutes, replace the batteries, count again,
       then repeat with haptics. `haptic.rs` is capped conservatively
       (25% duty, 600 µs on-time) meanwhile; if the drops are just wireless

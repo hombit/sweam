@@ -421,18 +421,20 @@ work. Measured on a live controller over the dongle:
   a narrow click train rather than a square wave.
 - **Sustained bursts *may* drop the controller off the dongle — unproven.**
   A melody at ~50% duty disconnected it after three notes, three times in as
-  many minutes, which looked conclusive at the time. It is not: later the
-  same evening the controller dropped three more times over five minutes
-  with **no haptics running at all**, once hopping from slot 1 to slot 2.
-  So this controller drops on its own, and the earlier cluster may have been
-  coincidence. Three candidates now, not two: the actuator browning out the
-  radio, tired batteries, or ordinary wireless flakiness. The battery packet
-  is never logged, so we could not check the middle one.
+  many minutes, which looked conclusive at the time. It is not conclusive:
+  three disconnects with no control condition is not a result. (A later
+  cluster of drops turned out to be the owner switching the controller off
+  to save battery — worth recording only because it briefly looked like
+  evidence of spontaneous flakiness, and was not.) Two candidates stand:
+  the actuator browning out the radio, or tired batteries. The battery
+  packet is never logged, so we could not check the second.
 
   `haptic.rs` caps duty at 25% and on-time at 600 µs anyway, as cheap
   insurance. **Retest with fresh batteries and a disconnect count taken with
   the actuators idle**, so there is a baseline to compare against — without
-  one, the last round of measurement proved nothing.
+  one, the last round of measurement proved nothing. Note the controller
+  must be left alone during the baseline: a hand switching it off looks
+  identical in the journal.
 - **The actuators need silence between notes.** A tune with only a 15% gap
   came back as "just one vzzhhhh"; the same pitches with long pauses were
   clearly distinguishable, and 40–55% works. The element rings on after a
